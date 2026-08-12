@@ -20,7 +20,7 @@ This is intentionally a small, single-device system. Use SQLite and one API proc
 - Send a prompt and stream its answer.
 - Preserve conversation history across restarts.
 - Select the default model, execution mode, reasoning effort, local tools, and MCP servers for each run; configure every agent's model individually in multi-agent modes.
-- Support four execution modes: `single`, `judge`, `jury`, and `debate`.
+- Support six execution modes: `single`, `judge`, `jury`, `debate`, `debate_judge`, and `debate_jury`.
 - Display run progress, tool activity, final output, errors, duration, and token usage when available.
 - Create, enable, disable, edit, run-now, and delete scheduled prompts.
 - Recover cleanly after API, container, or Raspberry Pi restarts.
@@ -45,7 +45,7 @@ These can be added later without changing the core `Trigger -> Run -> Orchestrat
 
 Use two distinct settings:
 
-- **Execution mode** controls how many agent passes collaborate: `single`, `judge`, `jury`, or `debate`.
+- **Execution mode** controls how many agent passes collaborate: `single`, `judge`, `jury`, `debate`, `debate_judge`, or `debate_jury`.
 - **Reasoning effort** is a model-specific setting such as `low`, `medium`, or `high`. Only offer values supported by each participant's selected model.
 
 Do not call execution modes “reasoning efforts” in code or API schemas; that would make model capability validation ambiguous.
@@ -55,11 +55,19 @@ Do not call execution modes “reasoning efforts” in code or API schemas; that
 | Mode | Behavior | Default model calls | Tool policy |
 | --- | --- | ---: | --- |
 | `single` | One agent produces the final answer. | 1+ model passes | Selected tools are available. |
-| `judge` | A primary agent produces a candidate; a separate judge reviews it and returns the corrected final answer. | 2+ model passes | Tools are available to the primary; the judge receives the candidate and relevant evidence but cannot create duplicate side effects. |
-| `jury` | Three independent jurors produce candidates in parallel; a judge compares them and synthesizes the final answer. | 4+ model passes | Only read-only tools may be shared across jurors in the MVP; side-effecting tools are rejected for this mode. |
+| `judge` | A primary agent answers; a judge decides whether the answer is correct. A failed verdict returns defects to the primary, which retries before another review. | 2+ model passes per attempt | Only read-only tools may be used because a failed review can cause retries. |
+| `jury` | A primary agent answers; multiple jurors independently decide whether the same answer is correct. If it does not receive a strict majority pass, their feedback is aggregated and the primary retries. | 4+ model passes per attempt with 3 jurors | Only read-only tools may be used because a failed review can cause retries. |
 | `debate` | Multiple debaters propose answers, inspect one another's stated arguments, challenge specific claims, and revise their positions; a moderator then synthesizes the final answer. | 7+ model passes with the default 3 debaters and 2 rounds | Only read-only tools may be used; side-effecting tools are rejected. Tool evidence gathered in the opening round is shared with all participants. |
+| `debate_judge` | Debaters and a moderator produce a candidate as in Debate; a separate judge verifies correctness. On failure, the debaters receive the judge's defects, run a remediation round, and the moderator resynthesizes before another review. | 8+ model passes | Only read-only tools may be used. |
+| `debate_jury` | Debaters and a moderator produce a candidate as in Debate; multiple jurors independently verify it. Without a strict majority pass, aggregated jury feedback drives a remediation round and resynthesis before another review. | 10+ model passes with 3 debaters and 3 jurors | Only read-only tools may be used. |
 
-Make jury size a server-side constrained option with a default of 3 and a small maximum (for example 5). For Debate, require at least 2 debaters and 2 rounds so it cannot degrade into independent voting. Default to 3 debaters and 2 rounds: round 1 produces independent opening positions; round 2 gives every debater the complete public transcript and requires a rebuttal that cites specific competing claims and states whether its answer changed. Then a separate moderator evaluates the transcript and produces the final answer. Bound the MVP to at most 5 debaters and 3 rounds to control latency, token use, and Raspberry Pi concurrency.
+Make jury size a server-side constrained odd number with a default of 3 and maximum of 5. The jury reviews one shared candidate; jurors do not create competing answers. A candidate passes only when more than half of the configured jurors return valid `correct` verdicts. If quorum is lost because reviewers fail, fail the run rather than treating missing votes as approval.
+
+Judge and jury verdicts must use a structured schema containing `verdict` (`correct` or `incorrect`), a concise public `summary`, an `issues` list, and actionable `retry_instructions`. Reviewers evaluate factual correctness, directness, completeness, internal consistency, correct use of tool evidence, and whether the response actually answers the prompt. A reviewer does not silently edit or replace the candidate. A `correct` verdict accepts the candidate unchanged; an `incorrect` verdict drives a new candidate and a new independent review. Reviewers may use the run's selected read-only tools to verify claims independently, but receive no side-effecting tools.
+
+Set `max_review_attempts` to 3 by default with a server maximum of 5. Attempt 1 is the initial candidate. Every retry receives the original prompt, prior candidate, tool evidence, and reviewer feedback, but must generate a fresh complete candidate. If no candidate passes within the limit, finish with status `review_failed`, retain the last candidate and all verdicts for inspection, and do not publish it as the successful assistant answer. This review gate improves reliability but is still model-based evaluation, not a mathematical guarantee of truth.
+
+For Debate, require at least 2 debaters and 2 rounds so it cannot degrade into independent voting. Default to 3 debaters and 2 rounds: round 1 produces independent opening positions; round 2 gives every debater the complete public transcript and requires a rebuttal that cites specific competing claims and states whether its answer changed. Then a separate moderator evaluates the transcript and produces the candidate answer. Bound the MVP to at most 5 debaters and 3 initial rounds to control latency, token use, and Raspberry Pi concurrency.
 
 The debate transcript contains deliberate, user-visible arguments and evidence, not private chain-of-thought. Prompts must ask for concise claims, supporting evidence, critiques, uncertainty, and revised conclusions; the application must not request or expose hidden reasoning. A participant failure should be recorded and the debate may continue only if at least 2 debaters complete every required round; otherwise fail the run rather than silently falling back to Jury or Single.
 
@@ -69,10 +77,12 @@ Every concrete agent participant has its own `model_id`:
 
 - `single`: one `primary` participant;
 - `judge`: `primary` and `judge` participants;
-- `jury`: one entry for each `juror_n` plus the final `judge`;
-- `debate`: one entry for each `debater_n` plus the final `moderator`.
+- `jury`: `primary` plus one entry for each `juror_n`;
+- `debate`: one entry for each `debater_n` plus `moderator`;
+- `debate_judge`: every Debate participant plus `judge`;
+- `debate_jury`: every Debate participant plus one entry for each `juror_n`.
 
-The run-level model is a convenience default used to initialize newly added participants, not a forced model for all roles. The UI must provide “apply this model to all” for quick setup while still allowing each participant to be changed independently. Different participants may use the same model, and changing jury/debate size adds or removes explicit participant configurations.
+The run-level model is a convenience default used to initialize newly added participants, not a forced model for all roles. The UI must provide “apply this model to all” for quick setup while still allowing each participant to be changed independently. Different participants may use the same model, and changing jury, debate, or hybrid-mode sizes adds or removes explicit participant configurations.
 
 Store the effective reasoning effort alongside every participant because reasoning support depends on its model. A participant initially inherits the run-level reasoning effort when supported; otherwise the UI/backend requires a valid value for that model. Model or effort changes must never be silently coerced. The backend validates every participant configuration against the capability registry and snapshots it before execution.
 
@@ -103,10 +113,14 @@ flowchart LR
     Orchestrator --> Judge[Judge]
     Orchestrator --> Jury[Jury]
     Orchestrator --> Debate[Debate]
+    Orchestrator --> DebateJudge[Debate + Judge]
+    Orchestrator --> DebateJury[Debate + Jury]
     Single --> SDK[OpenAI Agents SDK]
     Judge --> SDK
     Jury --> SDK
     Debate --> SDK
+    DebateJudge --> SDK
+    DebateJury --> SDK
     SDK --> Tools[Allowed local tools / MCPs]
     RunService --> DB[(SQLite)]
     RunService --> Stream[SSE run events]
@@ -212,7 +226,10 @@ Register both through the same `ToolDefinition`/registry interface intended for 
 │   │   │   │   ├── single.py
 │   │   │   │   ├── judge.py
 │   │   │   │   ├── jury.py
-│   │   │   │   └── debate.py
+│   │   │   │   ├── debate.py
+│   │   │   │   ├── debate_judge.py
+│   │   │   │   ├── debate_jury.py
+│   │   │   │   └── review.py
 │   │   │   ├── prompts.py
 │   │   │   └── runner.py
 │   │   ├── core/
@@ -290,21 +307,21 @@ Use UUIDs (stored as text) and UTC timestamps. Convert schedule times at the API
 
 - `id`, optional `conversation_id`, optional `schedule_id`.
 - `source_type`: `manual`, `schedule`, or future trigger type.
-- `status`: `queued`, `running`, `succeeded`, `failed`, `cancelled`, or `awaiting_approval`.
-- Immutable snapshot of prompt, default model/effort, execution mode, ordered participant configurations, selected tools/MCPs, jury size, debate participant/round limits, and system prompt version.
+- `status`: `queued`, `running`, `succeeded`, `review_failed`, `failed`, `cancelled`, or `awaiting_approval`.
+- Immutable snapshot of prompt, default model/effort, execution mode, ordered participant configurations, selected tools/MCPs, jury size, debate participant/round limits, `max_review_attempts`, correctness rubric version, and system prompt version.
 - `started_at`, `finished_at`, error code/message, final output.
 - Provider response/trace IDs, input/output token counts, and duration when available.
 
 ### `run_steps`
 
-- `id`, `run_id`, stable participant ID, role (`primary`, `judge`, `juror_1`, `debater_1`, `moderator`, etc.), effective model ID, reasoning effort, round number where applicable, status, and timestamps.
-- Candidate/final text, tool-call summary, token usage, and error details.
+- `id`, `run_id`, stable participant ID, role (`primary`, `judge`, `juror_1`, `debater_1`, `moderator`, etc.), effective model ID, reasoning effort, review-attempt number, debate-round number where applicable, status, and timestamps.
+- Candidate/final text, structured reviewer verdict where applicable, tool-call summary, token usage, and error details.
 - This makes Judge/Jury/Debate progress inspectable without exposing hidden chain-of-thought. Debate step output is the participant's concise public argument or rebuttal.
 
 ### `schedules`
 
 - `id`, `name`, prompt, enabled flag, schedule type, schedule expression/config, timezone.
-- Snapshot/defaults for conversation, default model/effort, ordered participant model/effort configurations, execution mode, tools/MCPs, jury size, and debate participant/round limits.
+- Snapshot/defaults for conversation, default model/effort, ordered participant model/effort configurations, execution mode, tools/MCPs, jury size, debate participant/round limits, and maximum review attempts.
 - `next_run_at`, `last_run_at`, misfire policy, created/updated timestamps.
 - Keep schedules rather than serialized scheduler jobs authoritative so migrations and validation stay under application control.
 
@@ -320,7 +337,7 @@ Prefix all endpoints with `/api/v1`. Generate OpenAPI from Pydantic request/resp
 ### Discovery/capabilities
 
 - `GET /models` — enabled model IDs, labels, supported reasoning efforts, and relevant feature flags.
-- `GET /execution-modes` — `single`, `judge`, `jury`, and `debate`, descriptions, required participant roles, expected call counts, configurable limits, and tool restrictions. Jury/Debate metadata describes dynamic participant roles; Debate metadata includes minimum/default/maximum debaters and rounds.
+- `GET /execution-modes` — all six modes, descriptions, required participant roles, expected call counts, retry behavior, configurable limits, and tool restrictions. Jury and hybrid metadata describes dynamic reviewer roles; Debate and hybrid metadata includes minimum/default/maximum debaters and rounds.
 - `GET /reasoning-efforts?model_id=...` — allowed values for the chosen model.
 - `GET /tools` — registered local tools, including initial `current_time` and `calculator` entries, their descriptions/input schemas, enabled state, risk/read-only metadata, and unattended-use policy.
 - `GET /mcp-servers` — configured server labels and allowed tools, without URLs containing credentials or any secret values.
@@ -350,18 +367,19 @@ Run creation accepts an ordered `participants` array. Each item contains a stabl
 ```json
 {
   "execution_mode": "jury",
+  "max_review_attempts": 3,
   "participants": [
-    {"id": "juror_1", "role": "juror", "model_id": "<model-a>", "reasoning_effort": "medium"},
-    {"id": "juror_2", "role": "juror", "model_id": "<model-b>", "reasoning_effort": "low"},
-    {"id": "juror_3", "role": "juror", "model_id": "<model-c>", "reasoning_effort": "high"},
-    {"id": "judge", "role": "judge", "model_id": "<model-d>", "reasoning_effort": "high"}
+    {"id": "primary", "role": "primary", "model_id": "<model-a>", "reasoning_effort": "medium"},
+    {"id": "juror_1", "role": "juror", "model_id": "<model-b>", "reasoning_effort": "medium"},
+    {"id": "juror_2", "role": "juror", "model_id": "<model-c>", "reasoning_effort": "low"},
+    {"id": "juror_3", "role": "juror", "model_id": "<model-d>", "reasoning_effort": "high"}
   ]
 }
 ```
 
 Return the resolved participant configuration from `GET /runs/{run_id}` so the UI and audit history show which model actually handled each role.
 
-Suggested SSE event types: `snapshot`, `run.status`, `step.started`, `text.delta`, `tool.started`, `tool.completed`, `step.completed`, `run.completed`, `run.failed`, and heartbeat comments. Persist status milestones and final content, but do not write every token delta to the Pi’s storage. On reconnect, send a current snapshot; completed output is always recoverable through `GET /runs/{id}`.
+Suggested SSE event types: `snapshot`, `run.status`, `attempt.started`, `candidate.completed`, `review.started`, `review.verdict`, `retry.requested`, `step.started`, `text.delta`, `tool.started`, `tool.completed`, `step.completed`, `run.completed`, `run.review_failed`, `run.failed`, and heartbeat comments. Persist status milestones, candidates, verdicts, and final content, but do not write every token delta to the Pi’s storage. On reconnect, send a current snapshot; completed output is always recoverable through `GET /runs/{id}`.
 
 ### Schedules
 
@@ -384,15 +402,16 @@ Support `once`, `interval`, and `cron` schedule types. Validate expressions befo
 
 1. Validate the request and every participant's model/effort pair against the model/tool/MCP/mode registries.
 2. Resolve conversation defaults and request overrides into an immutable run configuration with the exact required participant roles and cardinality.
-3. Reject incompatible combinations (for example, Jury or Debate plus a side-effecting tool, or Debate with fewer than 2 participants/rounds).
+3. Reject incompatible combinations (for example, any retry/review/debate mode plus a side-effecting tool, Debate with fewer than 2 participants/rounds, an even jury, or an invalid retry limit).
 4. Persist the user message and a `queued` run before starting model work.
 5. Start the run asynchronously and immediately return its ID.
 6. Build bounded conversation context from local messages. Add a summarization/compaction policy later when histories become too large.
 7. Construct only the tools and MCP servers selected for this run.
-8. Delegate to the selected orchestrator.
-9. Stream safe progress events; do not expose private chain-of-thought. Show role/status, candidate answers when desired, tool calls, and the final answer.
-10. Persist each step, final assistant message, usage, and terminal status in a transactionally consistent order.
-11. On failure, retain a stable error code and safe message, then permit a manual retry that creates a new run linked to the failed run.
+8. Delegate to the selected orchestrator. Compose hybrid modes from the same Debate producer and Judge/Jury review gates rather than duplicating their rules.
+9. For reviewed modes, produce a candidate and ask the configured judge/jurors for structured correctness verdicts. Accept only a judge pass or strict jury majority. Otherwise aggregate concise defects, increment the attempt, and rerun the producing primary or debate-remediation stage until accepted or exhausted.
+10. Stream safe progress events; do not expose private chain-of-thought. Show attempt number, role/status, public debate arguments, candidate answers, concise verdicts/defects, tool calls, retries, and the accepted final answer.
+11. Persist every candidate, verdict, retry instruction, step, usage record, final assistant message, and terminal status in a transactionally consistent order.
+12. On infrastructure/model failure, retain a stable error code and safe message, then permit a manual retry that creates a new run linked to the failed run. Keep this distinct from automatic correctness retries inside one run.
 
 Use dependency injection around the Agents SDK runner so tests can provide a deterministic fake and orchestration code does not depend directly on network calls.
 
@@ -435,11 +454,12 @@ Future webhook, filesystem, email, GPIO, MQTT, or Home Assistant adapters transl
 
 - Stream Markdown output with a visible stop button.
 - Composer settings drawer for default model, execution mode, default reasoning effort, tools, and MCP servers.
-- For multi-agent modes, render one model selector per concrete participant (`primary`/`judge`, each juror plus judge, or each debater plus moderator), with an adjacent reasoning-effort selector filtered for that model.
+- For multi-agent modes, render one model selector per concrete participant: primary/judge; primary plus jurors; debaters/moderator; or the corresponding Debate participants plus judge/jurors in a hybrid mode. Place a reasoning-effort selector filtered for that participant's model beside it.
 - Provide “apply model to all” and “apply reasoning effort where supported” actions without removing individual overrides.
 - Disable or explain invalid combinations immediately based on capability metadata.
-- Show the estimated mode multiplier (“1 agent,” “2 passes,” “3 jurors + judge,” or “3 debaters × 2 rounds + moderator”) and participant/model summary before execution.
-- Render Judge/Jury progress as compact step states. Render Debate as rounds containing labeled, concise public arguments and rebuttals followed by the moderator's synthesis; never label or present these as private chain-of-thought.
+- Show the estimated minimum call count and worst-case retry count, plus a participant/model summary, before execution.
+- Render Judge/Jury progress as attempt cards containing the candidate, reviewer verdicts, issues, and retry state. Render Debate as rounds containing labeled, concise public arguments and rebuttals followed by the moderator's synthesis. Hybrid modes then show the correctness review and any remediation rounds. Never label or present these as private chain-of-thought.
+- Let the user choose `max_review_attempts` within server limits for Judge, Jury, Debate + Judge, and Debate + Jury, with clear cost/latency guidance.
 - Allow retry and “reuse these settings.”
 
 ### Automations
@@ -546,6 +566,7 @@ Provide `.env.example` with non-secret defaults and documentation for at least:
 - `DEFAULT_REASONING_EFFORT`
 - `MAX_CONCURRENT_RUNS`
 - `MAX_JURY_SIZE`
+- `DEFAULT_MAX_REVIEW_ATTEMPTS` and `MAX_REVIEW_ATTEMPTS`
 - `DEFAULT_DEBATE_PARTICIPANTS` and `MAX_DEBATE_PARTICIPANTS`
 - `DEFAULT_DEBATE_ROUNDS` and `MAX_DEBATE_ROUNDS`
 - MCP credential environment variables referenced by server-side MCP configuration
@@ -590,18 +611,20 @@ Validate configuration at startup and fail with a clear error when a required se
 
 **Exit:** A run can use only explicitly selected, registered tools; `current_time` and `calculator` work across manual, scheduled, and multi-agent runs; secrets stay server-side; disallowed and incompatible selections fail before the model call.
 
-### Phase 3 — Judge, Jury, and Debate orchestration
+### Phase 3 — Reviewed, Debate, and hybrid orchestration
 
-- [ ] Add versioned prompts and structured outputs for candidate review/synthesis.
+- [ ] Add versioned correctness rubrics and structured verdict outputs for review, plus versioned prompts for candidate generation and debate synthesis.
 - [ ] Add ordered participant configuration schemas and per-participant Agents SDK construction for all multi-agent modes.
-- [ ] Implement Judge with a tool-free reviewer/finalizer.
-- [ ] Implement Jury with bounded parallel jurors and a final judge.
+- [ ] Implement Judge as a correctness gate with bounded primary-agent retries; it must accept or reject rather than silently rewrite the candidate.
+- [ ] Implement Jury as parallel independent reviews of one candidate, a strict-majority decision, feedback aggregation, quorum handling, and bounded primary-agent retries.
 - [ ] Implement Debate with bounded participants, ordered rounds, shared public transcripts, required claim-specific rebuttals, position revision, and a final moderator.
+- [ ] Implement Debate + Judge by composing Debate, the Judge gate, feedback-driven remediation rounds, and resynthesis.
+- [ ] Implement Debate + Jury by composing Debate, the Jury gate, aggregated feedback-driven remediation rounds, and resynthesis.
 - [ ] Enforce Debate quorum and partial-failure rules, plus read-only tool and shared-evidence policies.
-- [ ] Persist/run-stream each role’s status and usage.
-- [ ] Add limits, cancellation propagation, partial-failure behavior, and frontend cost/latency warnings.
+- [ ] Persist/run-stream every attempt, candidate, verdict, issue, remediation round, role status, and usage record.
+- [ ] Add review-attempt limits, cancellation propagation, partial-failure behavior, and frontend best/worst-case cost and latency warnings.
 
-**Exit:** All four execution modes have deterministic orchestration tests, visible progress, one persisted final answer, and enforced side-effect restrictions. Debate tests prove that each surviving participant receives prior-round arguments and produces a rebuttal before moderation.
+**Exit:** All six execution modes have deterministic orchestration tests, visible progress, one persisted accepted final answer, and enforced side-effect restrictions. Reviewed-mode tests prove that an incorrect verdict causes a fresh candidate and re-review, exhaustion produces `review_failed`, and no rejected candidate is published as successful. Debate tests prove that each surviving participant receives prior-round arguments and produces a rebuttal before moderation; hybrid tests prove reviewer feedback reaches the remediation round.
 
 ### Phase 4 — Scheduled runs
 
@@ -631,9 +654,12 @@ Validate configuration at startup and fail with a clear error when a required se
 ### Backend unit tests
 
 - Capability validation and default resolution.
-- Single/Judge/Jury/Debate call order, per-participant model/effort selection, inputs, results, concurrency, and cancellation using a fake runner.
+- All six modes' call order, per-participant model/effort selection, inputs, results, concurrency, and cancellation using a fake runner.
 - Required-role/cardinality validation, unsupported per-model reasoning efforts, participant add/remove behavior, and immutable configuration snapshots.
 - Debate transcript propagation, minimum participants/rounds, claim-specific rebuttal validation, quorum loss, moderator inputs, and call-count limits.
+- Judge pass/fail verdict parsing, defect propagation, fresh-answer retries, pass-after-retry, and retry exhaustion.
+- Jury strict-majority calculation, independent verdicts, feedback aggregation, reviewer quorum loss, retry propagation, and retry exhaustion.
+- Debate + Judge and Debate + Jury composition, including feedback-driven remediation, moderator resynthesis, and re-review.
 - Tool/MCP allowlisting and unattended/side-effect policies.
 - `current_time` default/explicit timezone handling, UTC conversion, and invalid timezone errors using a frozen test clock.
 - `calculator` operator precedence, decimal behavior, invalid syntax, division by zero, and every resource/syntax restriction, including tests proving names, calls, attributes, imports, and code execution are rejected.
@@ -652,7 +678,7 @@ Validate configuration at startup and fail with a clear error when a required se
 
 - Capability-dependent per-participant model/reasoning selectors, apply-to-all behavior, and invalid-combination messaging.
 - Chat streaming, errors, cancellation, and reload behavior.
-- Judge/Jury step progress and Debate round/transcript progress.
+- Judge/Jury attempt and verdict progress, Debate round/transcript progress, and hybrid remediation/re-review progress.
 - Schedule forms, timezone display, and next-run previews.
 
 ### Deployment tests
@@ -668,10 +694,12 @@ Validate configuration at startup and fail with a clear error when a required se
 - The UI is React + MUI and is served by Nginx.
 - The backend is FastAPI, dependencies are locked and installed with `uv`, and agent work uses the OpenAI Agents SDK.
 - Model, execution mode, reasoning effort, tool, and MCP choices are populated from backend discovery APIs and validated server-side.
-- In Judge, Jury, and Debate, the user can select a model individually for every agent and final judge/moderator; the effective model and compatible reasoning effort are persisted and used for that participant.
+- In every multi-agent mode, the user can select a model individually for the primary, every reviewer/debater, and the moderator where applicable; the effective model and compatible reasoning effort are persisted and used for that participant.
 - The initial `current_time` and `calculator` tools are discoverable, individually selectable, usable in scheduled and multi-agent runs, and cannot mutate data or execute arbitrary code.
-- Single, Judge, Jury, and Debate return one clear final answer and show understandable progress.
+- Single, Judge, Jury, Debate, Debate + Judge, and Debate + Jury return one clear final answer and show understandable progress.
+- Judge accepts an answer only after its structured correctness verdict passes. Jury accepts an answer only after a strict majority of configured jurors pass it. Failed reviews trigger a fresh candidate and another review up to the configured bound; exhaustion ends as `review_failed` and does not publish the rejected candidate as a successful answer.
 - Debate always includes at least 2 agents completing at least 2 rounds of visible argument and rebuttal before an independent moderator synthesizes the answer; it never silently behaves like Jury or Single.
+- Debate + Judge and Debate + Jury review the moderator's synthesized candidate, feed failed-review defects back into a visible remediation round, resynthesize, and re-review before accepting an answer.
 - Chat history, schedules, run status, and final outputs survive refreshes and restarts.
 - One-time, interval, and cron schedules execute in the configured timezone without duplicate runs.
 - Scheduled runs and future triggers use the same execution service as manual chat.
@@ -695,16 +723,17 @@ Validate configuration at startup and fail with a clear error when a required se
 
 - Multi-agent modes allow an individual model choice for every participant, including the final judge or moderator.
 - The initial tool set is `current_time` and `calculator`; both are local, read-only, approval-free, and allowed in unattended runs. Additional tools will use the same registry extension point later.
+- Judge and Jury are correctness-review modes, not answer-synthesis modes: failed verdicts send issues back to the producing agent, which retries and is reviewed again within a bounded attempt limit.
+- The execution-mode catalog includes Debate + Judge (`debate_judge`) and Debate + Jury (`debate_jury`). These review the moderator's answer and use failed-review feedback to drive a debate remediation round before resynthesis and re-review.
 
 ### Decisions still to confirm before implementation
 
 1. **Pi hardware and OS:** Which Raspberry Pi model, RAM size, 32/64-bit OS, and storage will be used? The recommended baseline is a 64-bit OS and SSD/high-endurance storage.
 2. **Network exposure:** Will the UI be available only on the Pi, or to other devices on the home LAN? No-auth deployment is reasonable on a trusted LAN but should not be internet-facing.
-3. **Judge/Jury/Debate semantics:** Is the proposed behavior correct: Judge = draft plus independent reviewer/finalizer; Jury = three independent drafts plus a final judge; Debate = three debaters completing an opening and rebuttal round plus a final moderator?
-4. **Schedule behavior:** Are once, interval, and cron schedules sufficient? What should happen after downtime: run one missed occurrence (recommended) or skip all missed occurrences?
-5. **Conversation memory:** Should every scheduled run append to a selected conversation, create a new conversation, or default to a standalone run? The proposed design supports all three, but the UI needs a default.
-6. **Notifications:** Is saving scheduled answers in the UI enough, or should completion/error notifications (email, push, Slack, etc.) be part of the first release?
-7. **Data retention:** Should conversations and tool audit records be kept indefinitely, or should the app automatically prune old run details?
+3. **Schedule behavior:** Are once, interval, and cron schedules sufficient? What should happen after downtime: run one missed occurrence (recommended) or skip all missed occurrences?
+4. **Conversation memory:** Should every scheduled run append to a selected conversation, create a new conversation, or default to a standalone run? The proposed design supports all three, but the UI needs a default.
+5. **Notifications:** Is saving scheduled answers in the UI enough, or should completion/error notifications (email, push, Slack, etc.) be part of the first release?
+6. **Data retention:** Should conversations and tool audit records be kept indefinitely, or should the app automatically prune old run details?
 
 ## 17. Reference
 
