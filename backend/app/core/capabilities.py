@@ -9,6 +9,11 @@ REASONING_EFFORTS = ["low", "medium", "high"]
 def participant_layout(mode: str, jury_size: int, debate_participants: int) -> list[dict[str, str]]:
     layouts: dict[str, list[dict[str, str]]] = {
         "single": [{"id": "primary", "role": "primary"}],
+        "plan": [
+            {"id": "planner", "role": "planner"},
+            {"id": "plan_reviewer", "role": "plan_reviewer"},
+            {"id": "executor", "role": "executor"},
+        ],
         "judge": [
             {"id": "primary", "role": "primary"},
             {"id": "judge", "role": "judge"},
@@ -43,6 +48,14 @@ def get_capabilities(settings: Settings, model_registry: ModelRegistry) -> dict[
             "label": "Single",
             "description": "One agent answers directly.",
             "reviewed": False,
+        },
+        {
+            "id": "plan",
+            "label": "Plan + Review",
+            "description": (
+                "A planner iterates with an independent reviewer before an executor acts."
+            ),
+            "reviewed": True,
         },
         {
             "id": "judge",
@@ -94,6 +107,15 @@ def get_capabilities(settings: Settings, model_registry: ModelRegistry) -> dict[
                 "read_only": True,
                 "unattended": True,
             },
+            {
+                "id": "spawn_child_agent",
+                "label": "Child agents",
+                "description": (
+                    "Delegate self-contained work to a child agent in a separate conversation."
+                ),
+                "read_only": False,
+                "unattended": True,
+            },
         ],
         "mcp_servers": [
             {
@@ -109,6 +131,7 @@ def get_capabilities(settings: Settings, model_registry: ModelRegistry) -> dict[
             "model_id": model_registry.default_model_id or "",
             "execution_mode": settings.default_execution_mode,
             "reasoning_effort": settings.default_reasoning_effort,
+            "enabled_tools": ["spawn_child_agent"],
             "jury_size": 3,
             "debate_participants": settings.default_debate_participants,
             "debate_rounds": settings.default_debate_rounds,

@@ -4,7 +4,7 @@ from app.core.model_registry import ModelRegistry
 from app.schemas.api import ParticipantConfig, RunOptions
 from app.tools.registry import validate_tool_ids
 
-REVIEWED_MODES = {"judge", "jury", "debate_judge", "debate_jury"}
+REVIEWED_MODES = {"plan", "judge", "jury", "debate_judge", "debate_jury"}
 DEBATE_MODES = {"debate", "debate_judge", "debate_jury"}
 JURY_MODES = {"jury", "debate_jury"}
 

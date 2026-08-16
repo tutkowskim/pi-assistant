@@ -14,6 +14,7 @@ from app.db.session import SessionLocal
 from app.schemas.api import ParticipantConfig, RunCreate, RunOptions
 from app.services.conversations import set_title_from_prompt
 from app.services.validation import resolve_run_options
+from app.tools.delegation import reset_delegation_context, set_delegation_context
 
 
 class RunService:
@@ -22,12 +23,17 @@ class RunService:
         self.model_registry = model_registry
         self.tasks: dict[str, asyncio.Task[None]] = {}
         self.semaphore = asyncio.Semaphore(settings.max_concurrent_runs)
+        self.child_semaphores = {
+            depth: asyncio.Semaphore(settings.max_concurrent_child_runs)
+            for depth in range(1, settings.max_child_agent_depth + 1)
+        }
 
     def create_run(
         self,
         request: RunCreate,
         conversation_id: str | None = None,
         schedule_id: str | None = None,
+        parent_run_id: str | None = None,
         source_type: str = "manual",
     ) -> Run:
         options = RunOptions.model_validate(request.model_dump(exclude={"prompt"}))
@@ -36,6 +42,7 @@ class RunService:
             run = Run(
                 conversation_id=conversation_id,
                 schedule_id=schedule_id,
+                parent_run_id=parent_run_id,
                 source_type=source_type,
                 prompt=request.prompt,
                 config=options.model_dump(mode="json"),
@@ -98,7 +105,21 @@ class RunService:
         return False
 
     async def _execute(self, run_id: str) -> None:
-        async with self.semaphore:
+        with SessionLocal() as session:
+            queued_run = session.get(Run, run_id)
+            is_child = queued_run is not None and queued_run.source_type == "child_agent"
+            child_depth = 0
+            ancestor_id = queued_run.parent_run_id if queued_run is not None else None
+            while ancestor_id is not None:
+                child_depth += 1
+                ancestor = session.get(Run, ancestor_id)
+                ancestor_id = ancestor.parent_run_id if ancestor is not None else None
+        semaphore = (
+            self.child_semaphores[min(max(child_depth, 1), self.settings.max_child_agent_depth)]
+            if is_child
+            else self.semaphore
+        )
+        async with semaphore:
             try:
                 await self._execute_inner(run_id)
             except asyncio.CancelledError:
@@ -180,7 +201,11 @@ class RunService:
                     )
 
         orchestrator = Orchestrator(OpenAIAgentRunner(self.settings), record_step)
-        result = await orchestrator.execute(prompt, history, config)
+        context_token = set_delegation_context(run_id)
+        try:
+            result = await orchestrator.execute(prompt, history, config)
+        finally:
+            reset_delegation_context(context_token)
         with SessionLocal.begin() as session:
             run = session.get(Run, run_id)
             if run is None:

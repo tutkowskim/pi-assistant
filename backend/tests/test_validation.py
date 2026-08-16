@@ -17,6 +17,10 @@ def settings() -> Settings:
     )
 
 
+def test_child_agent_tool_is_enabled_by_default() -> None:
+    assert RunOptions().enabled_tools == ["spawn_child_agent"]
+
+
 def test_hybrid_layouts_include_all_roles() -> None:
     judge = participant_layout("debate_judge", 3, 2)
     assert [item["id"] for item in judge] == ["debater_1", "debater_2", "moderator", "judge"]
@@ -28,6 +32,14 @@ def test_hybrid_layouts_include_all_roles() -> None:
         "juror_1",
         "juror_2",
         "juror_3",
+    ]
+
+
+def test_plan_layout_separates_planning_review_and_execution() -> None:
+    assert participant_layout("plan", 3, 3) == [
+        {"id": "planner", "role": "planner"},
+        {"id": "plan_reviewer", "role": "plan_reviewer"},
+        {"id": "executor", "role": "executor"},
     ]
 
 

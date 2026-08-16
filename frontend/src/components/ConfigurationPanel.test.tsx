@@ -16,7 +16,7 @@ describe('ConfigurationPanel', () => {
     fireEvent.click(screen.getByText('Calculator'))
 
     expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ enabled_tools: ['calculator'] }),
+      expect.objectContaining({ enabled_tools: ['spawn_child_agent', 'calculator'] }),
     )
   })
 

@@ -55,6 +55,9 @@ class Run(Base):
     schedule_id: Mapped[str | None] = mapped_column(
         ForeignKey("schedules.id", ondelete="SET NULL"), nullable=True
     )
+    parent_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     source_type: Mapped[str] = mapped_column(String(30), default="manual")
     status: Mapped[str] = mapped_column(String(30), default="queued", index=True)
     prompt: Mapped[str] = mapped_column(Text)

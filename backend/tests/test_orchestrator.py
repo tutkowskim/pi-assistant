@@ -11,6 +11,7 @@ class FakeRunner:
     def __init__(self, outputs: dict[str, list[Any]]) -> None:
         self.outputs = {key: list(value) for key, value in outputs.items()}
         self.calls: list[tuple[str, str]] = []
+        self.tool_calls: list[tuple[str, list[str], list[str]]] = []
 
     async def run_text(
         self,
@@ -21,6 +22,7 @@ class FakeRunner:
         mcp_server_ids: list[str],
     ) -> AgentResult:
         self.calls.append((participant.id, prompt))
+        self.tool_calls.append((participant.id, tool_ids, mcp_server_ids))
         return AgentResult(self.outputs[participant.id].pop(0), {})
 
     async def run_structured(
@@ -33,6 +35,7 @@ class FakeRunner:
         mcp_server_ids: list[str],
     ) -> AgentResult:
         self.calls.append((participant.id, prompt))
+        self.tool_calls.append((participant.id, tool_ids, mcp_server_ids))
         return AgentResult(self.outputs[participant.id].pop(0), {})
 
 
@@ -80,6 +83,95 @@ async def test_judge_retries_rejected_answer() -> None:
     assert "Correct the arithmetic" in runner.calls[2][1]
     assert "Earlier context" in runner.calls[1][1]
     assert [step["review_attempt"] for step in recorded] == [1, 1, 2, 2]
+
+
+@pytest.mark.asyncio
+async def test_plan_is_revised_and_approved_before_execution() -> None:
+    runner = FakeRunner(
+        {
+            "planner": ["unsafe draft", "approved plan"],
+            "plan_reviewer": [
+                ReviewVerdict(
+                    verdict="incorrect",
+                    summary="Missing verification",
+                    retry_instructions=["Add a verification step"],
+                ),
+                ReviewVerdict(verdict="correct", summary="Ready to execute"),
+            ],
+            "executor": ["executed result"],
+        }
+    )
+    recorded: list[dict[str, Any]] = []
+
+    async def record(**kwargs: Any) -> None:
+        recorded.append(kwargs)
+
+    config = RunOptions(
+        execution_mode="plan",
+        model_id="test-model",
+        max_review_attempts=3,
+        enabled_tools=["calculator"],
+        enabled_mcp_servers=["notes"],
+        participants=[
+            participant("planner", "planner"),
+            participant("plan_reviewer", "plan_reviewer"),
+            participant("executor", "executor"),
+        ],
+    )
+
+    result = await Orchestrator(runner, record).execute("Build it", "user: context", config)
+
+    assert result.status == "succeeded"
+    assert result.output == "executed result"
+    assert [name for name, _prompt in runner.calls] == [
+        "planner",
+        "plan_reviewer",
+        "planner",
+        "plan_reviewer",
+        "executor",
+    ]
+    assert "Add a verification step" in runner.calls[2][1]
+    assert "Approved plan:\napproved plan" in runner.calls[4][1]
+    assert [step["review_attempt"] for step in recorded] == [1, 1, 2, 2, 2]
+    assert runner.tool_calls[:4] == [
+        ("planner", [], []),
+        ("plan_reviewer", [], []),
+        ("planner", [], []),
+        ("plan_reviewer", [], []),
+    ]
+    assert runner.tool_calls[4] == ("executor", ["calculator"], ["notes"])
+
+
+@pytest.mark.asyncio
+async def test_rejected_plan_is_never_executed() -> None:
+    rejected = ReviewVerdict(verdict="incorrect", summary="Unsafe", issues=["Unsafe step"])
+    runner = FakeRunner(
+        {
+            "planner": ["draft one", "draft two"],
+            "plan_reviewer": [rejected, rejected],
+            "executor": ["must not be used"],
+        }
+    )
+
+    async def record(**kwargs: Any) -> None:
+        return None
+
+    config = RunOptions(
+        execution_mode="plan",
+        model_id="test-model",
+        max_review_attempts=2,
+        participants=[
+            participant("planner", "planner"),
+            participant("plan_reviewer", "plan_reviewer"),
+            participant("executor", "executor"),
+        ],
+    )
+
+    result = await Orchestrator(runner, record).execute("Build it", "", config)
+
+    assert result.status == "review_failed"
+    assert result.output is None
+    assert all(name != "executor" for name, _prompt in runner.calls)
 
 
 @pytest.mark.asyncio

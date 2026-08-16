@@ -21,9 +21,30 @@ describe('participant layouts', () => {
     const rebuilt = buildParticipants('judge', 'model-a', 'medium', 3, 3, original)
     expect(rebuilt[1].model_id).toBe('model-b')
   })
+
+  it('builds reviewed plan participants', () => {
+    const participants = buildParticipants('plan', 'model-a', 'high', 3, 3)
+    expect(participants.map((participant) => participant.id)).toEqual([
+      'planner',
+      'plan_reviewer',
+      'executor',
+    ])
+  })
 })
 
 describe('call estimates', () => {
+  it('includes plan revisions and one execution pass', () => {
+    expect(
+      minimumCalls({
+        execution_mode: 'plan',
+        jury_size: 3,
+        debate_participants: 3,
+        debate_rounds: 2,
+        max_review_attempts: 3,
+      }),
+    ).toEqual({ minimum: 3, maximum: 7 })
+  })
+
   it('includes hybrid remediation attempts', () => {
     expect(
       minimumCalls({
@@ -42,6 +63,7 @@ describe('run configuration lifecycle', () => {
     const config = initialConfig(capabilitiesFixture)
 
     expect(config.model_id).toBe('gpt-test')
+    expect(config.enabled_tools).toEqual(['spawn_child_agent'])
     expect(config.participants).toEqual([
       {
         id: 'primary',

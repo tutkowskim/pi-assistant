@@ -13,6 +13,9 @@ ANSWER_INSTRUCTIONS = """You are the answer-producing personal assistant.
 Answer the user's request accurately, directly, and completely. Use enabled tools when they
 provide facts or calculations. When retry feedback is supplied, correct every listed defect and
 return a fresh complete answer. Do not mention hidden reasoning or the review machinery.
+When the child-agent tool is available, use it aggressively to split broad requests into focused,
+self-contained parallel branches and keep unrelated context out of this chat. Give each child all
+context it needs. Do not delegate trivial work or tasks that must be completed serially.
 """
 
 REVIEW_INSTRUCTIONS = """You are an independent correctness reviewer. Evaluate the candidate
@@ -26,11 +29,33 @@ DEBATER_INSTRUCTIONS = """You are one participant in a public, concise debate. S
 supporting evidence, uncertainty, and your proposed answer. In later rounds, identify and challenge
 specific competing claims, then say clearly whether your position changed. Do not reveal private
 chain-of-thought; provide only the argument intended for the shared transcript.
+When the child-agent tool is available, delegate independent evidence-gathering branches early.
 """
 
 MODERATOR_INSTRUCTIONS = """You are the debate moderator. Synthesize the strongest supported
 claims into one accurate, direct, complete candidate answer. Resolve disagreements explicitly from
 the public evidence. Return only the candidate answer, not private reasoning or process commentary.
+"""
+
+PLAN_INSTRUCTIONS = """You are a planning agent. Produce a concrete, ordered plan that fully
+addresses the user's request. Identify dependencies, verification, risks, and clear completion
+criteria. Plan only: do not perform the work, call tools, or claim that any step is complete. When
+review feedback is supplied, revise the entire plan and address every listed defect. Return only the
+plan intended for the executor; never expose hidden chain-of-thought.
+"""
+
+PLAN_REVIEW_INSTRUCTIONS = """You are an independent plan reviewer. Evaluate whether the proposed
+plan is correct, complete, safe, efficient, executable, and faithful to the original request. Check
+that dependencies and verification are explicit and that the plan does not prematurely execute the
+task. Return the required structured verdict. Do not execute or rewrite the plan. Mark it correct
+only if no material defect remains; never reveal hidden chain-of-thought.
+"""
+
+EXECUTOR_INSTRUCTIONS = """You are the execution agent. Execute the approved plan to satisfy the
+original request, adapting only when reality requires it. Use enabled tools and verify the result.
+Return the complete final answer, not a plan or process transcript. When the child-agent tool is
+available, use it aggressively for independent branches or context-heavy subtasks, giving each child
+all required context. Do not delegate trivial or tightly serial work.
 """
 
 
@@ -97,6 +122,74 @@ class Orchestrator:
         await self._record(participant, result, attempt)
         return str(result.output)
 
+    async def _plan(
+        self,
+        prompt: str,
+        history: str,
+        config: RunOptions,
+        attempt: int,
+        previous_plan: str,
+        feedback: list[str],
+    ) -> str:
+        participant = self._participant(config, "planner")
+        retry = ""
+        if feedback:
+            retry = (
+                f"\n\nRejected prior plan:\n{previous_plan}\n\nCorrect all reviewer defects:\n- "
+                + "\n- ".join(feedback)
+            )
+        result = await self.runner.run_text(
+            participant,
+            PLAN_INSTRUCTIONS,
+            f"Conversation context:\n{history}\n\nUser request:\n{prompt}{retry}",
+            [],
+            [],
+        )
+        await self._record(participant, result, attempt)
+        return str(result.output)
+
+    async def _review_plan(
+        self,
+        prompt: str,
+        history: str,
+        plan: str,
+        config: RunOptions,
+        attempt: int,
+    ) -> ReviewVerdict:
+        reviewer = self._participant(config, "plan_reviewer")
+        result = await self.runner.run_structured(
+            reviewer,
+            PLAN_REVIEW_INSTRUCTIONS,
+            f"Conversation context:\n{history}\n\nOriginal request:\n{prompt}\n\n"
+            f"Proposed plan:\n{plan}\n\nReturn the plan-review verdict.",
+            ReviewVerdict,
+            [],
+            [],
+        )
+        verdict: ReviewVerdict = result.output
+        await self._record(reviewer, result, attempt, verdict=verdict)
+        return verdict
+
+    async def _execute_plan(
+        self,
+        prompt: str,
+        history: str,
+        plan: str,
+        config: RunOptions,
+        attempt: int,
+    ) -> str:
+        executor = self._participant(config, "executor")
+        result = await self.runner.run_text(
+            executor,
+            EXECUTOR_INSTRUCTIONS,
+            f"Conversation context:\n{history}\n\nOriginal request:\n{prompt}\n\n"
+            f"Approved plan:\n{plan}\n\nExecute the approved plan now.",
+            config.enabled_tools,
+            config.enabled_mcp_servers,
+        )
+        await self._record(executor, result, attempt)
+        return str(result.output)
+
     async def _review_one(
         self,
         reviewer: ParticipantConfig,
@@ -116,7 +209,7 @@ class Orchestrator:
             REVIEW_INSTRUCTIONS,
             review_prompt,
             ReviewVerdict,
-            config.enabled_tools,
+            [tool_id for tool_id in config.enabled_tools if tool_id != "spawn_child_agent"],
             config.enabled_mcp_servers,
         )
         verdict: ReviewVerdict = result.output
@@ -262,6 +355,24 @@ class Orchestrator:
         if config.execution_mode == "single":
             return OrchestrationResult(
                 "succeeded", await self._answer(prompt, history, config, 1, [])
+            )
+
+        if config.execution_mode == "plan":
+            plan_feedback: list[str] = []
+            plan = ""
+            for attempt in range(1, config.max_review_attempts + 1):
+                plan = await self._plan(prompt, history, config, attempt, plan, plan_feedback)
+                verdict = await self._review_plan(prompt, history, plan, config, attempt)
+                if verdict.verdict == "correct":
+                    output = await self._execute_plan(prompt, history, plan, config, attempt)
+                    return OrchestrationResult("succeeded", output)
+                plan_feedback = verdict.retry_instructions or verdict.issues
+            return OrchestrationResult(
+                "review_failed",
+                None,
+                "review_failed",
+                "No plan passed review after "
+                f"{config.max_review_attempts} attempts; execution was not started.",
             )
 
         if config.execution_mode == "debate":

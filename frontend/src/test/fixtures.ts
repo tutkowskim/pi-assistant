@@ -19,6 +19,7 @@ export const capabilitiesFixture: Capabilities = {
   ],
   execution_modes: [
     { id: 'single', label: 'Single', description: 'One agent.', reviewed: false },
+    { id: 'plan', label: 'Plan + Review', description: 'Reviewed plan.', reviewed: true },
     { id: 'judge', label: 'Judge', description: 'Judge review.', reviewed: true },
     { id: 'jury', label: 'Jury', description: 'Jury review.', reviewed: true },
     { id: 'debate', label: 'Debate', description: 'Agent debate.', reviewed: false },
@@ -29,6 +30,7 @@ export const capabilitiesFixture: Capabilities = {
   tools: [
     { id: 'current_time', label: 'Current time', description: 'Get time.', read_only: true, unattended: true },
     { id: 'calculator', label: 'Calculator', description: 'Calculate.', read_only: true, unattended: true },
+    { id: 'spawn_child_agent', label: 'Child agents', description: 'Delegate.', read_only: true, unattended: true },
   ],
   mcp_servers: [],
   model_providers: [
@@ -40,6 +42,7 @@ export const capabilitiesFixture: Capabilities = {
     model_id: 'gpt-test',
     execution_mode: 'single',
     reasoning_effort: 'medium',
+    enabled_tools: ['spawn_child_agent'],
     jury_size: 3,
     debate_participants: 3,
     debate_rounds: 2,
@@ -80,6 +83,7 @@ export const runFixture: Run = {
   id: 'run-1',
   conversation_id: conversationFixture.id,
   schedule_id: null,
+  parent_run_id: null,
   source_type: 'chat',
   status: 'succeeded',
   prompt: 'Question',

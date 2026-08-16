@@ -7,6 +7,7 @@ The app deliberately has no authentication or multi-tenant scaling features. Kee
 ## Execution modes
 
 - **Single** — one agent produces the answer.
+- **Plan + Review** — a planner drafts and revises a plan until an independent reviewer approves it; only then does a separate executor act.
 - **Judge** — one agent answers and a judge verifies it. A rejection sends concrete defects back to the answering agent for another attempt.
 - **Jury** — one agent answers and an odd-sized jury independently votes on correctness. A failed majority sends aggregated defects back for another attempt.
 - **Debate** — multiple agents debate, then a moderator synthesizes the final answer.
@@ -15,7 +16,7 @@ The app deliberately has no authentication or multi-tenant scaling features. Kee
 
 Multi-agent modes allow a different model and reasoning effort for every participant. Review modes default to three attempts and are capped at five. If every review fails, the run ends as `review_failed`; the last rejected draft remains visible in the run trace but is not presented as a successful answer.
 
-The initial local tools are a timezone-aware current-time tool and a sandboxed arithmetic calculator. A server-owned Streamable HTTP MCP registry starts empty; configured servers appear in the UI and can be enabled by ID for each run or schedule.
+The local tools include timezone-aware current time, a sandboxed arithmetic calculator, and a child-agent delegation tool. Delegation is enabled by default and strongly encouraged for broad, independent, or context-heavy branches. Each child runs in a fresh conversation, returns its result to the parent, inherits the parent configuration, and is bounded by depth, per-parent, timeout, and depth-specific concurrency limits so nested children cannot deadlock behind their parents. A server-owned Streamable HTTP MCP registry starts empty; configured servers appear in the UI and can be enabled by ID for each run or schedule.
 
 ## Architecture
 
@@ -26,11 +27,14 @@ The initial local tools are a timezone-aware current-time tool and a sandboxed a
 
 ## Run locally
 
-Create the backend environment file and configure at least one provider:
+Create the environment file at the repository root and configure at least one provider:
 
 ```bash
-cp .env.example backend/.env
+cp .env.example .env
 ```
+
+The backend loads this file regardless of its current working directory. A legacy
+`backend/.env` file may provide fallback values, but the root file takes precedence.
 
 Start the backend:
 
@@ -97,6 +101,7 @@ All application endpoints are under `/api/v1`:
 - `GET /models`, `/reasoning-efforts`, `/execution-modes`, `/tools`, and `/mcp-servers`
 - conversation create/list/update/delete plus message history
 - `POST /runs` or `POST /conversations/{id}/runs`
+- `POST /delegations` creates a linked child-agent conversation and run
 - `GET /runs/{id}` and `GET /runs/{id}/events` for SSE progress
 - `POST /runs/{id}/cancel`
 - schedule create/list/update/delete, history, and run-now

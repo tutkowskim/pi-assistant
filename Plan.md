@@ -20,7 +20,7 @@ This is intentionally a small, single-device system. Use SQLite and one API proc
 - Send a prompt and stream its answer.
 - Preserve conversation history across restarts.
 - Select the default model, execution mode, reasoning effort, local tools, and MCP servers for each run; configure every agent's model individually in multi-agent modes.
-- Support six execution modes: `single`, `judge`, `jury`, `debate`, `debate_judge`, and `debate_jury`.
+- Support seven execution modes: `single`, `plan`, `judge`, `jury`, `debate`, `debate_judge`, and `debate_jury`.
 - Display run progress, tool activity, final output, errors, duration, and token usage when available.
 - Create, enable, disable, edit, run-now, and delete scheduled prompts.
 - Recover cleanly after API process, container, or Raspberry Pi restarts.
@@ -45,7 +45,7 @@ These can be added later without changing the core `Trigger -> Run -> Orchestrat
 
 Use two distinct settings:
 
-- **Execution mode** controls how many agent passes collaborate: `single`, `judge`, `jury`, `debate`, `debate_judge`, or `debate_jury`.
+- **Execution mode** controls how many agent passes collaborate: `single`, `plan`, `judge`, `jury`, `debate`, `debate_judge`, or `debate_jury`.
 - **Reasoning effort** is a model-specific setting such as `low`, `medium`, or `high`. Only offer values supported by each participant's selected model.
 
 Do not call execution modes “reasoning efforts” in code or API schemas; that would make model capability validation ambiguous.
@@ -55,6 +55,7 @@ Do not call execution modes “reasoning efforts” in code or API schemas; that
 | Mode | Behavior | Default model calls | Tool policy |
 | --- | --- | ---: | --- |
 | `single` | One agent produces the final answer. | 1+ model passes | Selected tools are available. |
+| `plan` | A planner revises a plan until an independent reviewer approves it; a separate executor then acts. | 3+ model passes | Planning and review are tool-free; selected tools are available only to the executor. |
 | `judge` | A primary agent answers; a judge decides whether the answer is correct. A failed verdict returns defects to the primary, which retries before another review. | 2+ model passes per attempt | Only read-only tools may be used because a failed review can cause retries. |
 | `jury` | A primary agent answers; multiple jurors independently decide whether the same answer is correct. If it does not receive a strict majority pass, their feedback is aggregated and the primary retries. | 4+ model passes per attempt with 3 jurors | Only read-only tools may be used because a failed review can cause retries. |
 | `debate` | Multiple debaters propose answers, inspect one another's stated arguments, challenge specific claims, and revise their positions; a moderator then synthesizes the final answer. | 7+ model passes with the default 3 debaters and 2 rounds | Only read-only tools may be used; side-effecting tools are rejected. Tool evidence gathered in the opening round is shared with all participants. |
@@ -76,6 +77,7 @@ The debate transcript contains deliberate, user-visible arguments and evidence, 
 Every concrete agent participant has its own `model_id`:
 
 - `single`: one `primary` participant;
+- `plan`: `planner`, `plan_reviewer`, and `executor` participants;
 - `judge`: `primary` and `judge` participants;
 - `jury`: `primary` plus one entry for each `juror_n`;
 - `debate`: one entry for each `debater_n` plus `moderator`;
@@ -150,7 +152,15 @@ This matches the Agents SDK model in which the server owns deployment, state, to
 
 ### 3.8 Initial local tools
 
-Ship exactly two application-owned tools initially. Both are deterministic, read-only, safe for unattended scheduled runs, and available to every execution mode when the user enables them. Neither requires approval.
+Ship current-time and calculator tools plus a bounded child-agent delegation tool. Current time and calculator are deterministic and read-only. Delegation creates a linked child conversation and run through the API, is enabled by default, and is safe for unattended use within configured depth, count, concurrency, and timeout limits.
+
+#### `spawn_child_agent`
+
+- Purpose: split broad or context-heavy work into focused child-agent chats and return their results to the parent.
+- Input: a self-contained task and optional conversation title.
+- Create the child conversation and linked run through the application API; children inherit the parent model, tools, and MCP configuration.
+- Reserve separate bounded child-run concurrency so a waiting parent cannot deadlock its children.
+- Bound recursion depth and direct children per parent, and remove delegation from children at the depth limit.
 
 #### `current_time`
 
@@ -336,7 +346,7 @@ Prefix all endpoints with `/api/v1`. Generate OpenAPI from Pydantic request/resp
 ### Discovery/capabilities
 
 - `GET /models` — enabled model IDs, labels, supported reasoning efforts, and relevant feature flags.
-- `GET /execution-modes` — all six modes, descriptions, required participant roles, expected call counts, retry behavior, configurable limits, and tool restrictions. Jury and hybrid metadata describes dynamic reviewer roles; Debate and hybrid metadata includes minimum/default/maximum debaters and rounds.
+- `GET /execution-modes` — all seven modes, descriptions, required participant roles, expected call counts, retry behavior, configurable limits, and tool restrictions. Jury and hybrid metadata describes dynamic reviewer roles; Debate and hybrid metadata includes minimum/default/maximum debaters and rounds.
 - `GET /reasoning-efforts?model_id=...` — allowed values for the chosen model.
 - `GET /tools` — registered local tools, including initial `current_time` and `calculator` entries, their descriptions/input schemas, enabled state, risk/read-only metadata, and unattended-use policy.
 - `GET /mcp-servers` — configured server labels and allowed tools, without URLs containing credentials or any secret values.
@@ -623,7 +633,7 @@ Validate configuration at startup and fail with a clear error when a required se
 - [ ] Persist/run-stream every attempt, candidate, verdict, issue, remediation round, role status, and usage record.
 - [ ] Add review-attempt limits, cancellation propagation, partial-failure behavior, and frontend best/worst-case cost and latency warnings.
 
-**Exit:** All six execution modes have deterministic orchestration tests, visible progress, one persisted accepted final answer, and enforced side-effect restrictions. Reviewed-mode tests prove that an incorrect verdict causes a fresh candidate and re-review, exhaustion produces `review_failed`, and no rejected candidate is published as successful. Debate tests prove that each surviving participant receives prior-round arguments and produces a rebuttal before moderation; hybrid tests prove reviewer feedback reaches the remediation round.
+**Exit:** All seven execution modes have deterministic orchestration tests, visible progress, one persisted accepted final answer, and enforced side-effect restrictions. Reviewed-mode tests prove that an incorrect verdict causes a fresh candidate and re-review, exhaustion produces `review_failed`, and no rejected candidate is published as successful. Plan-mode tests prove execution never starts before approval. Debate tests prove that each surviving participant receives prior-round arguments and produces a rebuttal before moderation; hybrid tests prove reviewer feedback reaches the remediation round.
 
 ### Phase 4 — Scheduled runs
 
@@ -653,7 +663,7 @@ Validate configuration at startup and fail with a clear error when a required se
 ### Backend unit tests
 
 - Capability validation and default resolution.
-- All six modes' call order, per-participant model/effort selection, inputs, results, concurrency, and cancellation using a fake runner.
+- All seven modes' call order, per-participant model/effort selection, inputs, results, concurrency, and cancellation using a fake runner.
 - Required-role/cardinality validation, unsupported per-model reasoning efforts, participant add/remove behavior, and immutable configuration snapshots.
 - Debate transcript propagation, minimum participants/rounds, claim-specific rebuttal validation, quorum loss, moderator inputs, and call-count limits.
 - Judge pass/fail verdict parsing, defect propagation, fresh-answer retries, pass-after-retry, and retry exhaustion.
@@ -696,7 +706,7 @@ Validate configuration at startup and fail with a clear error when a required se
 - Model, execution mode, reasoning effort, tool, and MCP choices are populated from backend discovery APIs and validated server-side.
 - In every multi-agent mode, the user can select a model individually for the primary, every reviewer/debater, and the moderator where applicable; the effective model and compatible reasoning effort are persisted and used for that participant.
 - The initial `current_time` and `calculator` tools are discoverable, individually selectable, usable in scheduled and multi-agent runs, and cannot mutate data or execute arbitrary code.
-- Single, Judge, Jury, Debate, Debate + Judge, and Debate + Jury return one clear final answer and show understandable progress.
+- Single, Plan + Review, Judge, Jury, Debate, Debate + Judge, and Debate + Jury return one clear final answer and show understandable progress.
 - Judge accepts an answer only after its structured correctness verdict passes. Jury accepts an answer only after a strict majority of configured jurors pass it. Failed reviews trigger a fresh candidate and another review up to the configured bound; exhaustion ends as `review_failed` and does not publish the rejected candidate as a successful answer.
 - Debate always includes at least 2 agents completing at least 2 rounds of visible argument and rebuttal before an independent moderator synthesizes the answer; it never silently behaves like Jury or Single.
 - Debate + Judge and Debate + Jury review the moderator's synthesized candidate, feed failed-review defects back into a visible remediation round, resynthesize, and re-review before accepting an answer.

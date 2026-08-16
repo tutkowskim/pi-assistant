@@ -5,6 +5,9 @@ from typing import Annotated
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = BACKEND_ROOT.parent
+
 
 class MCPServerDefinition(BaseModel):
     id: str
@@ -24,7 +27,11 @@ def split_model_id(model_id: str) -> tuple[str, str]:
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        env_file=(BACKEND_ROOT / ".env", PROJECT_ROOT / ".env"),
+        extra="ignore",
+        case_sensitive=False,
+    )
 
     app_name: str = "Pi Assistant"
     app_version: str = "0.1.0"
@@ -47,6 +54,12 @@ class Settings(BaseSettings):
     default_execution_mode: str = "single"
     default_reasoning_effort: str = "medium"
     max_concurrent_runs: int = 2
+    max_concurrent_child_runs: int = 4
+    max_child_agents_per_run: int = 8
+    max_child_agent_depth: int = 2
+    child_agent_api_base_url: str = "http://127.0.0.1:8000/api/v1"
+    child_agent_poll_seconds: float = 0.5
+    child_agent_timeout_seconds: float = 300
     max_jury_size: int = 5
     default_max_review_attempts: int = 3
     max_review_attempts: int = 5
@@ -77,6 +90,14 @@ class Settings(BaseSettings):
             raise ValueError("MODEL_REFRESH_SECONDS must be at least 5")
         if self.max_jury_size < 3:
             raise ValueError("MAX_JURY_SIZE must be at least 3")
+        if self.max_concurrent_child_runs < 1:
+            raise ValueError("MAX_CONCURRENT_CHILD_RUNS must be at least 1")
+        if self.max_child_agents_per_run < 1:
+            raise ValueError("MAX_CHILD_AGENTS_PER_RUN must be at least 1")
+        if self.max_child_agent_depth < 1:
+            raise ValueError("MAX_CHILD_AGENT_DEPTH must be at least 1")
+        if self.child_agent_poll_seconds <= 0 or self.child_agent_timeout_seconds <= 0:
+            raise ValueError("Child-agent polling and timeout settings must be positive")
         if self.default_max_review_attempts > self.max_review_attempts:
             raise ValueError("DEFAULT_MAX_REVIEW_ATTEMPTS exceeds MAX_REVIEW_ATTEMPTS")
         if self.agents_tracing_enabled and not self.openai_api_key:

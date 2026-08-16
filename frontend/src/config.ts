@@ -19,7 +19,7 @@ export function initialConfig(capabilities: Capabilities): RunConfiguration {
     model_id: selectedModel,
     reasoning_effort: capabilities.defaults.reasoning_effort,
     participants: [],
-    enabled_tools: [],
+    enabled_tools: [...capabilities.defaults.enabled_tools],
     enabled_mcp_servers: [],
     jury_size: capabilities.defaults.jury_size,
     debate_participants: capabilities.defaults.debate_participants,
@@ -66,6 +66,13 @@ export function buildParticipants(
   previous: Participant[] = [],
 ): Participant[] {
   const roles: Pick<Participant, 'id' | 'role'>[] = []
+  if (mode === 'plan') {
+    roles.push(
+      { id: 'planner', role: 'planner' },
+      { id: 'plan_reviewer', role: 'plan_reviewer' },
+      { id: 'executor', role: 'executor' },
+    )
+  }
   if (mode === 'single' || mode === 'judge' || mode === 'jury') {
     roles.push({ id: 'primary', role: 'primary' })
   }
@@ -99,6 +106,9 @@ export function minimumCalls(config: {
     ? config.jury_size
     : 1
   if (config.execution_mode === 'single') return { minimum: 1, maximum: 1 }
+  if (config.execution_mode === 'plan') {
+    return { minimum: 3, maximum: config.max_review_attempts * 2 + 1 }
+  }
   if (config.execution_mode === 'debate') return { minimum: debate, maximum: debate }
   if (config.execution_mode === 'judge' || config.execution_mode === 'jury') {
     const perAttempt = 1 + reviewers

@@ -6,19 +6,28 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 class ParticipantConfig(BaseModel):
     id: str
-    role: Literal["primary", "judge", "juror", "debater", "moderator"]
+    role: Literal[
+        "primary",
+        "judge",
+        "juror",
+        "debater",
+        "moderator",
+        "planner",
+        "plan_reviewer",
+        "executor",
+    ]
     model_id: str
     reasoning_effort: Literal["low", "medium", "high"] = "medium"
 
 
 class RunOptions(BaseModel):
-    execution_mode: Literal["single", "judge", "jury", "debate", "debate_judge", "debate_jury"] = (
-        "single"
-    )
+    execution_mode: Literal[
+        "single", "plan", "judge", "jury", "debate", "debate_judge", "debate_jury"
+    ] = "single"
     model_id: str | None = None
     reasoning_effort: Literal["low", "medium", "high"] = "medium"
     participants: list[ParticipantConfig] = Field(default_factory=list)
-    enabled_tools: list[str] = Field(default_factory=list)
+    enabled_tools: list[str] = Field(default_factory=lambda: ["spawn_child_agent"])
     enabled_mcp_servers: list[str] = Field(default_factory=list)
     jury_size: int = Field(default=3, ge=3)
     debate_participants: int = Field(default=3, ge=2)
@@ -91,6 +100,7 @@ class RunOut(BaseModel):
     id: str
     conversation_id: str | None
     schedule_id: str | None
+    parent_run_id: str | None
     source_type: str
     status: str
     prompt: str
@@ -114,6 +124,18 @@ class ReviewVerdict(BaseModel):
     summary: str
     issues: list[str] = Field(default_factory=list)
     retry_instructions: list[str] = Field(default_factory=list)
+
+
+class DelegationCreate(BaseModel):
+    parent_run_id: str
+    task: str = Field(min_length=1, max_length=30_000)
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class DelegationAccepted(BaseModel):
+    conversation_id: str
+    run_id: str
+    status: str
 
 
 class ScheduleCreate(BaseModel):

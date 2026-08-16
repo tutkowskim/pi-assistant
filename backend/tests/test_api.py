@@ -7,13 +7,19 @@ def test_capabilities_include_all_modes_and_tools(client) -> None:  # type: igno
     body = response.json()
     assert {mode["id"] for mode in body["execution_modes"]} == {
         "single",
+        "plan",
         "judge",
         "jury",
         "debate",
         "debate_judge",
         "debate_jury",
     }
-    assert {tool["id"] for tool in body["tools"]} == {"current_time", "calculator"}
+    assert {tool["id"] for tool in body["tools"]} == {
+        "current_time",
+        "calculator",
+        "spawn_child_agent",
+    }
+    assert body["defaults"]["enabled_tools"] == ["spawn_child_agent"]
 
 
 def test_conversation_crud(client) -> None:  # type: ignore[no-untyped-def]
@@ -52,9 +58,7 @@ def test_conversation_run_is_scheduled_on_app_event_loop(client, monkeypatch) ->
         return None
 
     monkeypatch.setattr(RunService, "_execute", execute_without_provider_call)
-    conversation = client.post(
-        "/api/v1/conversations", json={"title": "Run scheduling"}
-    ).json()
+    conversation = client.post("/api/v1/conversations", json={"title": "Run scheduling"}).json()
 
     response = client.post(
         f"/api/v1/conversations/{conversation['id']}/runs",

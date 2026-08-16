@@ -1,5 +1,6 @@
 export type ExecutionMode =
   | 'single'
+  | 'plan'
   | 'judge'
   | 'jury'
   | 'debate'
@@ -10,7 +11,15 @@ export type ReasoningEffort = 'low' | 'medium' | 'high'
 
 export interface Participant {
   id: string
-  role: 'primary' | 'judge' | 'juror' | 'debater' | 'moderator'
+  role:
+    | 'primary'
+    | 'judge'
+    | 'juror'
+    | 'debater'
+    | 'moderator'
+    | 'planner'
+    | 'plan_reviewer'
+    | 'executor'
   model_id: string
   reasoning_effort: ReasoningEffort
 }
@@ -55,6 +64,7 @@ export interface Capabilities {
     model_id: string
     execution_mode: ExecutionMode
     reasoning_effort: ReasoningEffort
+    enabled_tools: string[]
     jury_size: number
     debate_participants: number
     debate_rounds: number
@@ -110,6 +120,7 @@ export interface Run {
   id: string
   conversation_id: string | null
   schedule_id: string | null
+  parent_run_id: string | null
   source_type: string
   status: string
   prompt: string
