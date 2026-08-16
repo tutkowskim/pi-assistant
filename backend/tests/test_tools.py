@@ -72,7 +72,11 @@ def test_python_sandbox_command_enforces_isolation_without_embedding_code() -> N
     assert command[command.index("--user") + 1] == "65534:65534"
     assert "--read-only" in command
     assert "no-new-privileges:true" in command
-    assert "seccomp=builtin" in command
+    security_options = [
+        command[index + 1] for index, item in enumerate(command) if item == "--security-opt"
+    ]
+    assert security_options == ["no-new-privileges:true"]
+    assert "seccomp=unconfined" not in command
     assert "--memory" in command
     assert "--cpus" in command
     assert "--pids-limit" in command

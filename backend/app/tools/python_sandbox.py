@@ -25,6 +25,9 @@ class _OutputBudget:
 def _docker_command(
     executable: str, container_name: str, image: str, timeout_seconds: int
 ) -> list[str]:
+    # Docker applies its default seccomp profile when no seccomp override is given.
+    # Avoid ``seccomp=builtin`` because Docker CLI versions before 23 interpret
+    # ``builtin`` as a profile path and fail before contacting the daemon.
     return [
         executable,
         "run",
@@ -43,8 +46,6 @@ def _docker_command(
         "ALL",
         "--security-opt",
         "no-new-privileges:true",
-        "--security-opt",
-        "seccomp=builtin",
         "--pids-limit",
         PIDS_LIMIT,
         "--memory",
