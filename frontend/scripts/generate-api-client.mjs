@@ -9,7 +9,7 @@ const repositoryRoot = resolve(frontendRoot, '..')
 const backendRoot = join(repositoryRoot, 'backend')
 const outputPath = join(frontendRoot, 'src', 'generated')
 const suppliedSchema = process.env.OPENAPI_SCHEMA_PATH
-const temporaryDirectory = suppliedSchema ? null : mkdtempSync(join(tmpdir(), 'chat-openapi-'))
+const temporaryDirectory = suppliedSchema ? null : mkdtempSync(join(tmpdir(), 'pi-assistant-openapi-'))
 const schemaPath = suppliedSchema ? resolve(suppliedSchema) : join(temporaryDirectory, 'openapi.json')
 
 function run(command, args, cwd) {
@@ -28,10 +28,11 @@ try {
         backendRoot,
         '--frozen',
         'python',
-        join(backendRoot, 'scripts', 'export_openapi.py'),
+        '-m',
+        'scripts.export_openapi',
         schemaPath,
       ],
-      repositoryRoot,
+      backendRoot,
     )
   }
 

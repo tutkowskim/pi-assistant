@@ -4,7 +4,7 @@ COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY backend/app ./app
 COPY backend/scripts ./scripts
-RUN mkdir -p /schema && uv run --no-sync python scripts/export_openapi.py /schema/openapi.json
+RUN mkdir -p /schema && uv run --no-sync python -m scripts.export_openapi /schema/openapi.json
 
 FROM node:22-alpine AS build
 WORKDIR /workspace/frontend

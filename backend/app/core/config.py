@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     app_name: str = "Pi Assistant"
     app_version: str = "0.1.0"
     app_data_dir: Path = Path("./data")
-    database_url: str = "sqlite:///./data/chat.db"
+    database_url: str = "sqlite:///./data/pi-assistant.db"
     app_timezone: str = "America/Los_Angeles"
     allowed_origins: Annotated[list[str], NoDecode] = [
         "http://localhost:5173",

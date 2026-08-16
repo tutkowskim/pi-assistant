@@ -57,11 +57,11 @@ jobs:
       matrix:
         include:
           - component: backend
-            image: tutkowskim/chat-backend
+            image: tutkowskim/pi-assistant-backend
             context: ./backend
             dockerfile: ./backend/Dockerfile
           - component: frontend
-            image: tutkowskim/chat-frontend
+            image: tutkowskim/pi-assistant-frontend
             context: .
             dockerfile: ./frontend/Dockerfile
     steps:
@@ -98,7 +98,7 @@ jobs:
           jq -n \
             --arg event_type "update-docker-tags" \
             --arg tag "$RELEASE_TAG" \
-            '{event_type: $event_type, client_payload: {tag: $tag, images: ["tutkowskim/chat-backend", "tutkowskim/chat-frontend"]}}' \
+            '{event_type: $event_type, client_payload: {tag: $tag, images: ["tutkowskim/pi-assistant-backend", "tutkowskim/pi-assistant-frontend"]}}' \
           | curl --fail-with-body -X POST https://api.github.com/repos/tutkowskim/HomeLab/dispatches \
               -H "Accept: application/vnd.github+json" \
               -H "Authorization: Bearer $GH_TOKEN" \

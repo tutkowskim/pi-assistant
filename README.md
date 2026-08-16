@@ -21,7 +21,7 @@ The initial local tools are a timezone-aware current-time tool and a sandboxed a
 
 - `frontend/`: React, TypeScript, Vite, Material UI, React Query; built into a static Nginx image.
 - `backend/`: Python 3.12, FastAPI, OpenAI Agents SDK, SQLAlchemy/Alembic, APScheduler, and `uv`.
-- SQLite data is stored in `backend/data/chat.db` when running locally. The production HomeLab stack persists `/app/data/chat.db` in the `chat_data` volume.
+- SQLite data is stored in `backend/data/pi-assistant.db` when running locally. The production HomeLab stack persists `/app/data/pi-assistant.db` in the `pi_assistant_data` volume.
 - Vite serves the SPA and proxies `/api` to the backend during local development. The production Nginx image provides the same proxy path, including server-sent run updates.
 
 ## Run locally
@@ -75,7 +75,7 @@ For example, install Gemma 4 before opening the model selector:
 ollama pull gemma4
 ```
 
-The default Ollama server is `http://olamma.tutkowski.com`. Set `OLLAMA_BASE_URL` or `CHAT_OLLAMA_BASE_URL` to the host, a native endpoint such as `/api/generate`, or the OpenAI-compatible `/v1` endpoint; the backend normalizes all three forms. Model execution uses `/v1`, while discovery uses `/api/tags`. Do not expose an unauthenticated Ollama endpoint to the public internet.
+The default Ollama server is `http://olamma.tutkowski.com`. Set `OLLAMA_BASE_URL` locally or `PI_ASSISTANT_OLLAMA_BASE_URL` in HomeLab to the host, a native endpoint such as `/api/generate`, or the OpenAI-compatible `/v1` endpoint; the backend normalizes all three forms. Model execution uses `/v1`, while discovery uses `/api/tags`. Do not expose an unauthenticated Ollama endpoint to the public internet.
 
 `MCP_SERVERS` accepts a JSON array of Streamable HTTP server definitions. Headers stay server-side and are never returned by the capabilities API:
 
@@ -134,8 +134,8 @@ Backend orchestration tests use a deterministic fake runner, so they verify judg
 
 Every push to `main` runs tests and publishes ARM64-only images:
 
-- `tutkowskim/chat-backend`
-- `tutkowskim/chat-frontend`
+- `tutkowskim/pi-assistant-backend`
+- `tutkowskim/pi-assistant-frontend`
 
 The workflow publishes both `latest` and one shared UTC tag in `YYYY.MM.DD.HHMM` form. After both images succeed, it sends one repository dispatch to HomeLab so both pinned tags change atomically.
 
@@ -145,10 +145,10 @@ Configure these GitHub Actions secrets in this repository:
 - `DOCKERHUB_TOKEN`
 - `PERSONAL_ACCESS_TOKEN`, with permission to dispatch the `tutkowskim/HomeLab` repository
 
-The HomeLab stack has been extended with the two services and a proxy virtual host for `chat.tutkowski.com`. Configure `CHAT_OPENAI_API_KEY` and/or `CHAT_GEMINI_API_KEY` in the Portainer stack environment. Optional values include `CHAT_GEMINI_BASE_URL`, `CHAT_OLLAMA_BASE_URL`, `CHAT_MODEL_REFRESH_SECONDS`, `CHAT_TIMEZONE`, `CHAT_MCP_SERVERS`, and `CHAT_DEFAULT_MODEL_ID`. Portainer's existing five-minute Git polling deploys the workflow's tag commit; no webhook is required.
+The HomeLab stack has been extended with the two services and a proxy virtual host for `pi-assistant.tutkowski.com`. Configure `PI_ASSISTANT_OPENAI_API_KEY` and/or `PI_ASSISTANT_GEMINI_API_KEY` in the Portainer stack environment. Optional values include `PI_ASSISTANT_GEMINI_BASE_URL`, `PI_ASSISTANT_OLLAMA_BASE_URL`, `PI_ASSISTANT_MODEL_REFRESH_SECONDS`, `PI_ASSISTANT_TIMEZONE`, `PI_ASSISTANT_MCP_SERVERS`, and `PI_ASSISTANT_DEFAULT_MODEL_ID`. Portainer's existing five-minute Git polling deploys the workflow's tag commit; no webhook is required.
 
 The reusable HomeLab changes are also recorded in `deploy/HomeLab.patch`, and the service-only reference is in `deploy/homelab.compose.fragment.yml`.
 
 ## Data and recovery
 
-Back up the `chat_data` volume, especially `chat.db`, before upgrades. To restore, stop the stack, restore that file into the volume, and start the stack again. Alembic migrations run automatically when the backend container starts.
+Back up the `pi_assistant_data` volume, especially `pi-assistant.db`, before upgrades. To restore, stop the stack, restore that file into the volume, and start the stack again. Alembic migrations run automatically when the backend container starts.

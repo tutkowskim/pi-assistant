@@ -1,4 +1,4 @@
-# Raspberry Pi Personal Assistant Chat — Build Plan
+# Pi Assistant — Build Plan
 
 ## 1. Goal
 
@@ -492,24 +492,24 @@ Treat `HomeLab/docker-compose.yml` as the authoritative production stack definit
 
 Add two services to the HomeLab stack:
 
-- `chat_backend` using `tutkowskim/chat-backend:<pinned timestamp tag>`;
-- `chat_frontend` using `tutkowskim/chat-frontend:<same pinned timestamp tag>`.
+- `pi_assistant_backend` using `tutkowskim/pi-assistant-backend:<pinned timestamp tag>`;
+- `pi_assistant_frontend` using `tutkowskim/pi-assistant-frontend:<same pinned timestamp tag>`.
 
 The backend service should:
 
-- receive `${CHAT_OPENAI_API_KEY}`, `${CHAT_TIMEZONE}`, and any MCP credentials from Portainer stack environment variables;
-- mount a named `chat_data` volume at `/app/data` for SQLite and application data;
+- receive `${PI_ASSISTANT_OPENAI_API_KEY}`, `${PI_ASSISTANT_TIMEZONE}`, and any MCP credentials from Portainer stack environment variables;
+- mount a named `pi_assistant_data` volume at `/app/data` for SQLite and application data;
 - use `restart: unless-stopped`, a health check, and no host-published port;
 - have an internal service name that the frontend Nginx config can resolve.
 
 The frontend service should:
 
-- proxy `/api/` to `http://chat_backend:<internal port>`;
+- proxy `/api/` to `http://pi_assistant_backend:<internal port>`;
 - expose no host port when it is routed through the HomeLab `nginx-proxy` service;
 - use `restart: unless-stopped` and a health check;
 - depend on the backend health where supported by the Portainer/Docker Compose version.
 
-Extend the existing HomeLab `nginx_config` with a `chat.tutkowski.com` server block. That outer proxy routes to `chat_frontend:80`; the frontend’s own Nginx routes API and SSE traffic internally to the backend. Apply the same SSE buffering/time-out settings at both proxy layers.
+Extend the existing HomeLab `nginx_config` with a `pi-assistant.tutkowski.com` server block. That outer proxy routes to `pi_assistant_frontend:80`; the frontend’s own Nginx routes API and SSE traffic internally to the backend. Apply the same SSE buffering/time-out settings at both proxy layers.
 
 Continue the HomeLab convention of pinning timestamped tags rather than deploying `latest`. Portainer polls the HomeLab Git repository every five minutes, detects the committed tag update, pulls the new pinned images, and redeploys the stack. No Portainer webhook or direct deployment call is needed from this repository’s release workflow.
 
@@ -519,8 +519,8 @@ Create `.github/workflows/docker-publish.yml`, triggered by every push to `main`
 
 1. **Test** — run backend and frontend checks before publishing.
 2. **Prepare** — generate one UTC tag such as `2026.08.11.2140` and expose it as a job output so both images receive exactly the same release tag.
-3. **Build/push backend** — build `./backend` for `linux/arm64` only and push `tutkowskim/chat-backend:<tag>` plus `:latest`.
-4. **Build/push frontend** — build `./frontend` for `linux/arm64` only and push `tutkowskim/chat-frontend:<tag>` plus `:latest`.
+3. **Build/push backend** — build `./backend` for `linux/arm64` only and push `tutkowskim/pi-assistant-backend:<tag>` plus `:latest`.
+4. **Build/push frontend** — build `./frontend` for `linux/arm64` only and push `tutkowskim/pi-assistant-frontend:<tag>` plus `:latest`.
 5. **Notify HomeLab** — only after both image jobs succeed, send one authenticated `repository_dispatch` event containing the shared tag and both image names.
 
 Use the same repository secrets as DnsUpdater unless renamed:
@@ -531,7 +531,7 @@ Use the same repository secrets as DnsUpdater unless renamed:
 
 Also set minimal workflow permissions, use Buildx cache storage, attach the commit SHA as an OCI image label, and ensure forks/pull requests cannot publish images or access publishing secrets.
 
-The current HomeLab `update-service-image-tag.yml` accepts only one image per event. Extend it to accept an `images` object/list and update both chat image lines in one workflow run and one commit. Preserve support for the existing single-image `image_name`/`new_tag` payload so DnsUpdater and other publishers keep working. A single atomic update avoids two repository-dispatch workflows racing to commit separate frontend/backend changes.
+The current HomeLab `update-service-image-tag.yml` accepts only one image per event. Extend it to accept an `images` object/list and update both Pi Assistant image lines in one workflow run and one commit. Preserve support for the existing single-image `image_name`/`new_tag` payload so DnsUpdater and other publishers keep working. A single atomic update avoids two repository-dispatch workflows racing to commit separate frontend/backend changes.
 
 Recommended dispatch payload shape:
 
@@ -541,8 +541,8 @@ Recommended dispatch payload shape:
   "client_payload": {
     "tag": "2026.08.11.2140",
     "images": [
-      "tutkowskim/chat-backend",
-      "tutkowskim/chat-frontend"
+      "tutkowskim/pi-assistant-backend",
+      "tutkowskim/pi-assistant-frontend"
     ]
   }
 }
@@ -639,7 +639,7 @@ Validate configuration at startup and fail with a clear error when a required se
 - [ ] Test native ARM64 builds and measure idle/active CPU and memory.
 - [ ] Publish matching timestamped frontend/backend images to Docker Hub and verify their ARM64 manifests.
 - [ ] Extend the HomeLab repository-dispatch workflow for an atomic two-image tag update while retaining its existing single-image payload.
-- [ ] Add the pinned chat services, persistent volume, environment variables, and assistant proxy route to `HomeLab/docker-compose.yml`.
+- [ ] Add the pinned Pi Assistant services, persistent volume, environment variables, and proxy route to `HomeLab/docker-compose.yml`.
 - [ ] Deploy through Portainer, confirm image pulls and volume persistence, and document the update/rollback procedure.
 - [ ] Verify Nginx SSE settings and graceful shutdown during a live run.
 - [ ] Add log rotation, health checks, database backup/restore, and startup migration documentation.
@@ -713,8 +713,8 @@ Validate configuration at startup and fail with a clear error when a required se
 
 ### Confirmed deployment decisions
 
-- Docker Hub images: `tutkowskim/chat-backend` and `tutkowskim/chat-frontend`.
-- Public HomeLab hostname: `chat.tutkowski.com`.
+- Docker Hub images: `tutkowskim/pi-assistant-backend` and `tutkowskim/pi-assistant-frontend`.
+- Public HomeLab hostname: `pi-assistant.tutkowski.com`.
 - Published platform: `linux/arm64` only.
 - Release trigger: every push to `main` after required tests pass.
 - Deployment trigger: the publishing workflow updates the pinned tags in HomeLab; Portainer polls that Git repository every five minutes and redeploys without a webhook.
