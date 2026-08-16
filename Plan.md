@@ -23,9 +23,9 @@ This is intentionally a small, single-device system. Use SQLite and one API proc
 - Support six execution modes: `single`, `judge`, `jury`, `debate`, `debate_judge`, and `debate_jury`.
 - Display run progress, tool activity, final output, errors, duration, and token usage when available.
 - Create, enable, disable, edit, run-now, and delete scheduled prompts.
-- Recover cleanly after API, container, or Raspberry Pi restarts.
+- Recover cleanly after API process, container, or Raspberry Pi restarts.
 - Expose discovery APIs for models, execution modes, reasoning efforts, tools, and MCP servers.
-- Run the complete application with Docker Compose locally and as part of the existing Portainer-managed `HomeLab/docker-compose.yml` stack.
+- Run the complete application as direct backend and frontend processes locally and as part of the existing Portainer-managed `HomeLab/docker-compose.yml` stack.
 - Build and publish timestamped ARM64 frontend and backend images from GitHub Actions, then update their pinned tags in `HomeLab`.
 
 ### Explicit non-goals for the MVP
@@ -88,9 +88,9 @@ Store the effective reasoning effort alongside every participant because reasoni
 
 ### 3.4 Maintain an application-owned capability registry
 
-Do not expose every provider model or accept arbitrary model/tool names. Keep a server-side registry that defines:
+Do not accept arbitrary model/tool names from a request. Maintain a server-side registry populated from configured provider APIs and filtered to agent-compatible models. OpenAI and Gemini use their model-list endpoints; Ollama uses `/api/ps` so its entries reflect models currently loaded in memory. Cache and refresh discovery, retaining the last successful provider snapshot through temporary query failures. The registry defines:
 
-- enabled model IDs and display names;
+- discovered model IDs, provider-prefixed IDs, and display names;
 - supported reasoning efforts and relevant capabilities;
 - execution modes and their constraints;
 - registered local tools, risk level, and whether they are read-only;
@@ -197,7 +197,7 @@ Register both through the same `ToolDefinition`/registry interface intended for 
 
 ### Deployment
 
-- Docker Compose with `frontend` and `backend` services for local development.
+- Direct `uvicorn` and Vite processes for local development.
 - Published Docker Hub images for the production `frontend` and `backend` services; Portainer must pull images and must not need the source repository or local build contexts.
 - A production service definition maintained in the existing `HomeLab/docker-compose.yml`, following its current environment-variable and pinned-image-tag conventions.
 - Named/bind volume for the SQLite database and local application data.
@@ -259,6 +259,7 @@ Register both through the same `ToolDefinition`/registry interface intended for 
 │   │   ├── scheduler.py
 │   │   └── main.py
 │   ├── tests/
+│   ├── data/                   # ignored local runtime data
 │   ├── Dockerfile
 │   ├── pyproject.toml
 │   └── uv.lock
@@ -276,11 +277,9 @@ Register both through the same `ToolDefinition`/registry interface intended for 
 │   ├── nginx.conf
 │   ├── Dockerfile
 │   └── package.json
-├── data/                       # ignored; mounted at runtime
 ├── .github/
 │   └── workflows/
 │       └── docker-publish.yml
-├── compose.yaml
 ├── .env.example
 ├── README.md
 └── Plan.md
@@ -482,14 +481,14 @@ Future webhook, filesystem, email, GPIO, MQTT, or Home Assistant adapters transl
 - Backend Dockerfile: install dependencies from the locked `uv` environment, run as a non-root user, and include a health check.
 - Nginx should serve `index.html` as the SPA fallback and cache hashed assets aggressively.
 - Proxy `/api/` to the backend; disable response buffering and extend read timeouts for SSE.
-- Compose should persist `/app/data`, inject configuration, declare service health dependencies, and use `restart: unless-stopped`.
+- The HomeLab stack should persist `/app/data`, inject configuration, declare service health dependencies, and use `restart: unless-stopped`.
 - Bind to the Pi’s LAN only if remote devices need access. Otherwise bind to loopback. With no authentication, do not forward the port from the router to the public internet.
 - Pin image/dependency versions and confirm all images support the Pi’s architecture (`linux/arm64` for a 64-bit Pi OS).
 - Document database backup and restore. Prefer an SSD or high-endurance storage if run history will be write-heavy.
 
 ### Portainer/HomeLab integration
 
-Treat `HomeLab/docker-compose.yml` as the authoritative production stack definition and this repository’s `compose.yaml` as the local-development definition. Do not add `build:` entries to the HomeLab stack; it should pull published images.
+Treat `HomeLab/docker-compose.yml` as the authoritative production stack definition. Local development runs the backend and frontend directly. Do not add `build:` entries to the HomeLab stack; it should pull published images.
 
 Add two services to the HomeLab stack:
 
@@ -560,7 +559,7 @@ Provide `.env.example` with non-secret defaults and documentation for at least:
 - `DATABASE_URL`
 - `APP_TIMEZONE`
 - `ALLOWED_ORIGINS`
-- `MODEL_REGISTRY` or a path to a versioned YAML/JSON registry
+- `MODEL_DISCOVERY_ENABLED`, `MODEL_REFRESH_SECONDS`, and optional offline `MODEL_IDS`
 - `DEFAULT_MODEL_ID`
 - `DEFAULT_EXECUTION_MODE`
 - `DEFAULT_REASONING_EFFORT`
@@ -581,12 +580,12 @@ Validate configuration at startup and fail with a clear error when a required se
 - [ ] Resolve the open questions in section 16.
 - [ ] Create backend and frontend projects.
 - [ ] Configure `uv`, TypeScript, formatting, linting, tests, environment settings, and `.gitignore`.
-- [ ] Add Dockerfiles, Compose, Nginx proxying, and health endpoints.
+- [ ] Add Dockerfiles, Nginx proxying, and health endpoints.
 - [ ] Add the GitHub Actions test/build/publish workflow using the DnsUpdater conventions.
 - [ ] Draft the two production services and reverse-proxy route for the HomeLab Portainer stack.
 - [ ] Verify a no-op stack on the target Pi architecture.
 
-**Exit:** React loads through Nginx, FastAPI health is reachable through `/api`, SQLite persists across container restarts, and checks run locally.
+**Exit:** React loads through Vite locally, FastAPI health is reachable through `/api`, SQLite persists across API process restarts, and checks run locally.
 
 ### Phase 1 — Single-mode chat vertical slice
 
@@ -645,7 +644,7 @@ Validate configuration at startup and fail with a clear error when a required se
 - [ ] Verify Nginx SSE settings and graceful shutdown during a live run.
 - [ ] Add log rotation, health checks, database backup/restore, and startup migration documentation.
 - [ ] Add LAN exposure guidance and confirm secrets are absent from images, frontend bundles, API responses, and logs.
-- [ ] Run unit, integration, frontend, Compose smoke, and one opt-in live OpenAI test.
+- [ ] Run unit, integration, frontend, direct-process smoke, HomeLab stack smoke, and one opt-in live OpenAI test.
 
 **Exit:** A fresh Pi can be configured from `.env.example`, started with one documented command, rebooted without data loss, and restored from backup.
 
@@ -684,7 +683,8 @@ Validate configuration at startup and fail with a clear error when a required se
 ### Deployment tests
 
 - Build both images for ARM64.
-- Start Compose, wait for readiness, open the SPA, call the API through Nginx, and verify SSE is not buffered.
+- Start the backend and frontend directly, wait for readiness, open the SPA, and call the API through Vite.
+- Start the HomeLab stack, call the API through Nginx, and verify SSE is not buffered.
 - Restart backend and the full stack, confirming conversation/schedule persistence and scheduler reconciliation.
 
 ## 15. MVP acceptance criteria
@@ -722,11 +722,12 @@ Validate configuration at startup and fail with a clear error when a required se
 ### Confirmed product decisions
 
 - Multi-agent modes allow an individual model choice for every participant, including the final judge or moderator.
+- The provider registry discovers agent-compatible OpenAI and Gemini models from their model-list APIs and queries Ollama `/api/ps` so only models currently loaded in memory appear. Results refresh in the background, provider credentials remain server-side, and one multi-agent run may mix providers.
 - The initial tool set is `current_time` and `calculator`; both are local, read-only, approval-free, and allowed in unattended runs. Additional tools will use the same registry extension point later.
 - Judge and Jury are correctness-review modes, not answer-synthesis modes: failed verdicts send issues back to the producing agent, which retries and is reviewed again within a bounded attempt limit.
 - The execution-mode catalog includes Debate + Judge (`debate_judge`) and Debate + Jury (`debate_jury`). These review the moderator's answer and use failed-review feedback to drive a debate remediation round before resynthesis and re-review.
 
-### Decisions still to confirm before implementation
+### Remaining operational decisions before the first deployment
 
 1. **Pi hardware and OS:** Which Raspberry Pi model, RAM size, 32/64-bit OS, and storage will be used? The recommended baseline is a 64-bit OS and SSD/high-endurance storage.
 2. **Network exposure:** Will the UI be available only on the Pi, or to other devices on the home LAN? No-auth deployment is reasonable on a trusted LAN but should not be internet-facing.

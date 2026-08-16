@@ -1,0 +1,176 @@
+diff --git a/docker-compose.yml b/docker-compose.yml
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -26,6 +26,37 @@ services:
+       - OPENAI_MODEL=gpt-5.2
+     restart: unless-stopped
+ 
++  chat_backend:
++    image: tutkowskim/chat-backend:latest
++    container_name: ChatBackend
++    environment:
++      - OPENAI_API_KEY=${CHAT_OPENAI_API_KEY}
++      - GEMINI_API_KEY=${CHAT_GEMINI_API_KEY}
++      - GEMINI_BASE_URL=${CHAT_GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}
++      - OLLAMA_BASE_URL=${CHAT_OLLAMA_BASE_URL:-http://olamma.tutkowski.com/v1/}
++      - APP_DATA_DIR=/app/data
++      - DATABASE_URL=sqlite:////app/data/chat.db
++      - APP_TIMEZONE=${CHAT_TIMEZONE:-America/Los_Angeles}
++      - MODEL_DISCOVERY_ENABLED=true
++      - MODEL_REFRESH_SECONDS=${CHAT_MODEL_REFRESH_SECONDS:-15}
++      - MCP_SERVERS=${CHAT_MCP_SERVERS:-[]}
++      - DEFAULT_MODEL_ID=${CHAT_DEFAULT_MODEL_ID:-}
++    volumes:
++      - chat_data:/app/data
++    networks:
++      default:
++        aliases:
++          - backend
++    restart: unless-stopped
++
++  chat_frontend:
++    image: tutkowskim/chat-frontend:latest
++    container_name: ChatFrontend
++    depends_on:
++      chat_backend:
++        condition: service_healthy
++    restart: unless-stopped
++
+   nginx-proxy:
+     image: nginx:alpine
+     container_name: nginx-proxy
+@@ -60,3 +91,20 @@ configs:
+               proxy_set_header Host $$host;
+           }
+       }
++      server {
++          listen 80;
++          server_name chat.tutkowski.com;
++          location / {
++              proxy_pass http://chat_frontend:80;
++              proxy_http_version 1.1;
++              proxy_set_header Host $$host;
++              proxy_set_header X-Real-IP $$remote_addr;
++              proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
++              proxy_set_header X-Forwarded-Proto $$scheme;
++              proxy_buffering off;
++              proxy_read_timeout 3600s;
++          }
++      }
++
++volumes:
++  chat_data:
+diff --git a/.github/workflows/update-service-image-tag.yml b/.github/workflows/update-service-image-tag.yml
+--- a/.github/workflows/update-service-image-tag.yml
++++ b/.github/workflows/update-service-image-tag.yml
+@@ -1,33 +1,76 @@
+-name: Update Service Image Tag
+-
+-on:
+-  repository_dispatch:
+-    types: [update-docker-tag]
+-
+-jobs:
+-  update-yaml:
+-    runs-on: ubuntu-latest
+-
+-    steps:
+-      - name: Checkout repo
+-        uses: actions/checkout@v4
+-
+-      - name: Update image tag in docker-compose.yml
+-        run: |
+-          FILE=docker-compose.yml
+-          IMAGE_NAME="${{ github.event.client_payload.image_name }}"
+-          NEW_TAG="${{ github.event.client_payload.new_tag }}"
+-
+-          # Extract base name without tag (if needed)
+-          BASE_NAME=$(echo "$IMAGE_NAME" | cut -d: -f1)
+-
+-          # Replace the line that starts with image: and set it to the new tag
+-          sed -i "s|^\([[:space:]]*image:[[:space:]]*\)${BASE_NAME}:[^[:space:]]*|\1${BASE_NAME}:${NEW_TAG}|" "$FILE"
+-
+-      - name: Commit and push changes
+-        run: |
+-          git config --global user.name "GitHub Actions"
+-          git config --global user.email "actions@github.com"
+-          git add docker-compose.yml
+-          git commit -m "Update ${SERVICE_NAME} image tag to ${{ github.event.client_payload.new_tag }}"
+-          git push
+\ No newline at end of file
++name: Update Service Image Tag
++
++on:
++  repository_dispatch:
++    types: [update-docker-tag, update-docker-tags]
++
++permissions:
++  contents: write
++
++concurrency:
++  group: update-service-image-tags
++  cancel-in-progress: false
++
++jobs:
++  update-yaml:
++    runs-on: ubuntu-latest
++
++    steps:
++      - name: Checkout repo
++        uses: actions/checkout@v6
++        with:
++          fetch-depth: 0
++
++      - name: Update image tags in docker-compose.yml
++        shell: bash
++        run: |
++          set -euo pipefail
++          FILE=docker-compose.yml
++
++          if [[ "${{ github.event.action }}" == "update-docker-tags" ]]; then
++            NEW_TAG="$(jq -r '.client_payload.tag' "$GITHUB_EVENT_PATH")"
++            mapfile -t IMAGES < <(jq -r '.client_payload.images[]' "$GITHUB_EVENT_PATH")
++          else
++            NEW_TAG="$(jq -r '.client_payload.new_tag' "$GITHUB_EVENT_PATH")"
++            IMAGES=("$(jq -r '.client_payload.image_name' "$GITHUB_EVENT_PATH")")
++          fi
++
++          if [[ ! "$NEW_TAG" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]{4}$ ]]; then
++            echo "Invalid image tag: $NEW_TAG" >&2
++            exit 1
++          fi
++          if [[ ${#IMAGES[@]} -eq 0 ]]; then
++            echo "No images supplied" >&2
++            exit 1
++          fi
++
++          for IMAGE_NAME in "${IMAGES[@]}"; do
++            if [[ ! "$IMAGE_NAME" =~ ^[a-z0-9._/-]+$ ]]; then
++              echo "Invalid image name: $IMAGE_NAME" >&2
++              exit 1
++            fi
++            if ! grep -Eq "^[[:space:]]*image:[[:space:]]*${IMAGE_NAME}:" "$FILE"; then
++              echo "Image not found in $FILE: $IMAGE_NAME" >&2
++              exit 1
++            fi
++            sed -i "s|^\([[:space:]]*image:[[:space:]]*\)${IMAGE_NAME}:[^[:space:]]*|\1${IMAGE_NAME}:${NEW_TAG}|" "$FILE"
++          done
++
++          UPDATED_IMAGES="$(IFS=,; echo "${IMAGES[*]}")"
++          echo "NEW_TAG=$NEW_TAG" >> "$GITHUB_ENV"
++          echo "UPDATED_IMAGES=$UPDATED_IMAGES" >> "$GITHUB_ENV"
++
++      - name: Commit and push changes
++        shell: bash
++        run: |
++          set -euo pipefail
++          git config user.name "GitHub Actions"
++          git config user.email "actions@github.com"
++          git add docker-compose.yml
++          if git diff --cached --quiet; then
++            echo "Image tags are already current"
++            exit 0
++          fi
++          git commit -m "Update ${UPDATED_IMAGES} image tag to ${NEW_TAG}"
++          git pull --rebase origin main
++          git push
