@@ -30,7 +30,8 @@ export const capabilitiesFixture: Capabilities = {
   tools: [
     { id: 'current_time', label: 'Current time', description: 'Get time.', read_only: true, unattended: true },
     { id: 'calculator', label: 'Calculator', description: 'Calculate.', read_only: true, unattended: true },
-    { id: 'spawn_child_agent', label: 'Child agents', description: 'Delegate.', read_only: true, unattended: true },
+    { id: 'execute_python', label: 'Python sandbox', description: 'Run Python.', read_only: true, unattended: true },
+    { id: 'spawn_child_agent', label: 'Child agents', description: 'Delegate.', read_only: false, unattended: true },
   ],
   mcp_servers: [],
   model_providers: [

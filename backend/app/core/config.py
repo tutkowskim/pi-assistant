@@ -60,6 +60,13 @@ class Settings(BaseSettings):
     child_agent_api_base_url: str = "http://127.0.0.1:8000/api/v1"
     child_agent_poll_seconds: float = 0.5
     child_agent_timeout_seconds: float = 300
+    python_sandbox_docker_executable: str = "docker"
+    python_sandbox_image: str = "python:3.12-alpine"
+    python_sandbox_timeout_seconds: int = 10
+    python_sandbox_max_timeout_seconds: int = 30
+    python_sandbox_start_timeout_seconds: int = 15
+    python_sandbox_max_code_chars: int = 50_000
+    python_sandbox_max_output_bytes: int = 64 * 1024
     max_jury_size: int = 5
     default_max_review_attempts: int = 3
     max_review_attempts: int = 5
@@ -98,6 +105,16 @@ class Settings(BaseSettings):
             raise ValueError("MAX_CHILD_AGENT_DEPTH must be at least 1")
         if self.child_agent_poll_seconds <= 0 or self.child_agent_timeout_seconds <= 0:
             raise ValueError("Child-agent polling and timeout settings must be positive")
+        if not self.python_sandbox_docker_executable or not self.python_sandbox_image:
+            raise ValueError("Python sandbox Docker executable and image must be configured")
+        if self.python_sandbox_timeout_seconds < 1:
+            raise ValueError("PYTHON_SANDBOX_TIMEOUT_SECONDS must be at least 1")
+        if self.python_sandbox_max_timeout_seconds < self.python_sandbox_timeout_seconds:
+            raise ValueError("Python sandbox maximum timeout is below its default timeout")
+        if self.python_sandbox_start_timeout_seconds < 1:
+            raise ValueError("PYTHON_SANDBOX_START_TIMEOUT_SECONDS must be at least 1")
+        if self.python_sandbox_max_code_chars < 1 or self.python_sandbox_max_output_bytes < 1:
+            raise ValueError("Python sandbox code and output limits must be positive")
         if self.default_max_review_attempts > self.max_review_attempts:
             raise ValueError("DEFAULT_MAX_REVIEW_ATTEMPTS exceeds MAX_REVIEW_ATTEMPTS")
         if self.agents_tracing_enabled and not self.openai_api_key:

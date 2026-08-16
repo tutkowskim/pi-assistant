@@ -108,6 +108,16 @@ def get_capabilities(settings: Settings, model_registry: ModelRegistry) -> dict[
                 "unattended": True,
             },
             {
+                "id": "execute_python",
+                "label": "Python sandbox",
+                "description": (
+                    "Execute Python in an ephemeral, resource-limited Docker container without "
+                    "network access or host mounts."
+                ),
+                "read_only": True,
+                "unattended": True,
+            },
+            {
                 "id": "spawn_child_agent",
                 "label": "Child agents",
                 "description": (

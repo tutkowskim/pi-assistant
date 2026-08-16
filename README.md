@@ -16,7 +16,7 @@ The app deliberately has no authentication or multi-tenant scaling features. Kee
 
 Multi-agent modes allow a different model and reasoning effort for every participant. Review modes default to three attempts and are capped at five. If every review fails, the run ends as `review_failed`; the last rejected draft remains visible in the run trace but is not presented as a successful answer.
 
-The local tools include timezone-aware current time, a sandboxed arithmetic calculator, and a child-agent delegation tool. Delegation is enabled by default and strongly encouraged for broad, independent, or context-heavy branches. Each child runs in a fresh conversation, returns its result to the parent, inherits the parent configuration, and is bounded by depth, per-parent, timeout, and depth-specific concurrency limits so nested children cannot deadlock behind their parents. A server-owned Streamable HTTP MCP registry starts empty; configured servers appear in the UI and can be enabled by ID for each run or schedule.
+The local tools include timezone-aware current time, a sandboxed arithmetic calculator, isolated Python execution, and child-agent delegation. The Python tool runs code in an ephemeral Docker container with no network or host mounts, a read-only root filesystem, dropped Linux capabilities, and strict CPU, memory, process, time, and output limits. Delegation is enabled by default and strongly encouraged for broad, independent, or context-heavy branches. Each child runs in a fresh conversation, returns its result to the parent, inherits the parent configuration, and is bounded by depth, per-parent, timeout, and depth-specific concurrency limits so nested children cannot deadlock behind their parents. A server-owned Streamable HTTP MCP registry starts empty; configured servers appear in the UI and can be enabled by ID for each run or schedule.
 
 ## Architecture
 
@@ -43,6 +43,13 @@ cd backend
 uv sync --all-groups
 uv run alembic upgrade head
 uv run uvicorn app.main:app --reload
+```
+
+To enable the Python sandbox during direct local development, install Docker and pre-pull its
+configured image. Tool execution never pulls images itself:
+
+```bash
+docker pull python:3.12-alpine
 ```
 
 In another terminal, start the frontend:
@@ -80,6 +87,18 @@ ollama pull gemma4
 ```
 
 The default Ollama server is `http://olamma.tutkowski.com`. Set `OLLAMA_BASE_URL` locally or `PI_ASSISTANT_OLLAMA_BASE_URL` in HomeLab to the host, a native endpoint such as `/api/generate`, or the OpenAI-compatible `/v1` endpoint; the backend normalizes all three forms. Model execution uses `/v1`, while discovery uses `/api/tags`. Do not expose an unauthenticated Ollama endpoint to the public internet.
+
+### Python sandbox deployment
+
+The production backend image includes only the Docker client. The HomeLab compose fragment mounts
+the host Docker socket and adds its group ID so the unprivileged backend user can create sandbox
+containers. Set `PI_ASSISTANT_DOCKER_GID` to the result of
+`stat -c '%g' /var/run/docker.sock` on the host. The fragment also preloads the pinned
+`python:3.12-alpine` image; sandbox executions use `--pull=never` and `--network none`.
+
+Access to the Docker socket is host-administrator-equivalent. Keep the backend private and retain
+the hardcoded command construction: model-supplied code must only be passed over container stdin.
+The spawned container never receives the socket, credentials, environment secrets, or host paths.
 
 `MCP_SERVERS` accepts a JSON array of Streamable HTTP server definitions. Headers stay server-side and are never returned by the capabilities API:
 

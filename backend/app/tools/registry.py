@@ -3,6 +3,7 @@ from typing import Any
 
 from app.tools.delegation import spawn_child_agent
 from app.tools.local import calculator, current_time
+from app.tools.python_sandbox import execute_python
 
 ToolCallable = Callable[..., Any]
 
@@ -10,6 +11,7 @@ LOCAL_TOOLS: dict[str, ToolCallable] = {
     "current_time": current_time,
     "calculator": calculator,
     "spawn_child_agent": spawn_child_agent,
+    "execute_python": execute_python,
 }
 
 

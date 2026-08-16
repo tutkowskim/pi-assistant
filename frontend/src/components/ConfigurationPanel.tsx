@@ -1,4 +1,5 @@
 import CalculateRounded from '@mui/icons-material/CalculateRounded'
+import CodeRounded from '@mui/icons-material/CodeRounded'
 import HubRounded from '@mui/icons-material/HubRounded'
 import MoreTimeRounded from '@mui/icons-material/MoreTimeRounded'
 import RefreshRounded from '@mui/icons-material/RefreshRounded'
@@ -303,7 +304,13 @@ export function ConfigurationPanel({
                 clickable
                 color={selected ? 'primary' : 'default'}
                 variant={selected ? 'filled' : 'outlined'}
-                icon={tool.id === 'calculator' ? <CalculateRounded /> : <MoreTimeRounded />}
+                icon={
+                  tool.id === 'calculator'
+                    ? <CalculateRounded />
+                    : tool.id === 'execute_python'
+                      ? <CodeRounded />
+                      : <MoreTimeRounded />
+                }
                 label={tool.label}
                 onClick={() =>
                   onChange({

@@ -17,6 +17,7 @@ def test_capabilities_include_all_modes_and_tools(client) -> None:  # type: igno
     assert {tool["id"] for tool in body["tools"]} == {
         "current_time",
         "calculator",
+        "execute_python",
         "spawn_child_agent",
     }
     assert body["defaults"]["enabled_tools"] == ["spawn_child_agent"]

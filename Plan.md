@@ -152,7 +152,7 @@ This matches the Agents SDK model in which the server owns deployment, state, to
 
 ### 3.8 Initial local tools
 
-Ship current-time and calculator tools plus a bounded child-agent delegation tool. Current time and calculator are deterministic and read-only. Delegation creates a linked child conversation and run through the API, is enabled by default, and is safe for unattended use within configured depth, count, concurrency, and timeout limits.
+Ship current-time and calculator tools, isolated Python execution, and bounded child-agent delegation. Current time and calculator are deterministic and read-only. Python executes only in an ephemeral, resource-limited Docker container with no network or host mounts. Delegation creates a linked child conversation and run through the API, is enabled by default, and is safe for unattended use within configured depth, count, concurrency, and timeout limits.
 
 #### `spawn_child_agent`
 
@@ -161,6 +161,14 @@ Ship current-time and calculator tools plus a bounded child-agent delegation too
 - Create the child conversation and linked run through the application API; children inherit the parent model, tools, and MCP configuration.
 - Reserve separate bounded child-run concurrency so a waiting parent cannot deadlock its children.
 - Bound recursion depth and direct children per parent, and remove delegation from children at the depth limit.
+
+#### `execute_python`
+
+- Purpose: run self-contained Python calculations, parsing, transformations, and simulations.
+- Pass code only through stdin to a fixed application-owned Docker command; never interpolate code into a shell or Docker arguments.
+- Use `--network none`, `--pull never`, no host mounts, a read-only root filesystem, an unprivileged user, dropped capabilities, `no-new-privileges`, and bounded CPU, memory, processes, files, execution time, and captured output.
+- Kill and remove the named container on timeout, output overflow, cancellation, or client interruption.
+- Require the configured sandbox image to be pre-pulled during deployment.
 
 #### `current_time`
 
@@ -179,7 +187,7 @@ Ship current-time and calculator tools plus a bounded child-agent delegation too
 - Enforce expression-length, nesting, exponent, magnitude, precision, and execution-time limits; return stable errors for invalid syntax, overflow, or division by zero.
 - Output: normalized expression, result, and precision/rounding metadata where relevant.
 
-Register both through the same `ToolDefinition`/registry interface intended for future tools. Adding another tool later should require a new implementation plus registry metadata and tests, without changes to run request schemas or orchestration code. No MCP server is required for these two local tools.
+Register all local tools through the same `ToolDefinition`/registry interface intended for future tools. Adding another tool later should require a new implementation plus registry metadata and tests, without changes to run request schemas or orchestration code. No MCP server is required for these local tools.
 
 ## 4. Proposed technology stack
 
